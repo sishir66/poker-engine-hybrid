@@ -8,6 +8,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from src.utils.card import Card
 from src.utils.deck import Deck
+from src.engine.hand import Hand
 from src.models.train_poker import PokerMLP
 from src.models.generate_dataset import convert_card_to_data
 from src.engine.risk import calculate_kelly_fraction
@@ -29,28 +30,29 @@ class PokerEngine:
         self.current_best_hand = None
 
     def get_best_hand(self, hole_cards, community_cards):
-        """Memoized hand evaluation using card signatures."""
+        """
+        Deterministic best-hand evaluation over all C(n,5) combinations.
+        Returns a get_hand_key() tuple — not an MLP scalar — so kicker
+        tiebreaking is preserved. MLP is no longer used here; it remains
+        available for the (still broken) calculate_win_odds() batch path.
+        """
         current_sig = tuple(sorted([(c.rank, c.suit) for c in (hole_cards + community_cards)]))
 
         if hasattr(self, 'cache_sig') and self.cache_sig == current_sig:
             return self.current_best_hand
 
-        all_seven = hole_cards + community_cards
-        if len(all_seven) < 5:
-            return 0
+        all_cards = hole_cards + community_cards
+        if len(all_cards) < 5:
+            return (0,)
 
-        all_combos = list(itertools.combinations(all_seven, 5))
-        feature_matrix = convert_card_to_data(all_combos, return_numpy=True)
-        scaled_matrix = self.scaler.transform(feature_matrix)
+        best_key = max(
+            Hand(list(combo)).get_hand_key()
+            for combo in itertools.combinations(all_cards, 5)
+        )
 
-        with torch.no_grad():
-            tensor_input = torch.FloatTensor(scaled_matrix).to(self.device)
-            outputs = self.model(tensor_input)
-            predictions = torch.argmax(outputs, dim=1)
-
-        self.current_best_hand = torch.max(predictions).item()
+        self.current_best_hand = best_key
         self.cache_sig = current_sig
-        return self.current_best_hand
+        return best_key
 
     def calculate_win_odds(self, hole_cards, community_cards, num_opponents=1, simulations=1000):
         """Vectorized Monte Carlo Simulation."""
@@ -75,20 +77,49 @@ class PokerEngine:
 
         # [Broadcasting/Infilling logic for feature_matrix goes here]
 
-        scaled_data = self.scaler.transform(feature_matrix)
-        with torch.no_grad():
-            inputs = torch.FloatTensor(scaled_data).to(self.device)
-            logits = self.model(inputs)
-            probs = torch.argmax(logits, dim=1).view(simulations, 1 + num_opponents)
+        # --- MLP path (feature_matrix above is still all-zeros / broken) ---
+        # Kept as a stub for future vectorized inference once infill is fixed.
+        # The comparison below bypasses it and uses deterministic Hand evaluation.
 
-        our_scores = probs[:, 0]
-        opp_scores = probs[:, 1:]
-        max_opp_scores = torch.max(opp_scores, dim=1)[0]
+        # --- Comparison: get_hand_key() tuples, kicker-aware ---
+        wins = 0
+        ties = 0
+        for sim_idx in range(simulations):
+            drawn = sim_cards[sim_idx]  # shape (total_needed, 2): [rank, suit]
+            board_drawn = [
+                Card(int(drawn[i, 0]), int(drawn[i, 1]))
+                for i in range(cards_needed_board)
+            ]
+            full_board = community_cards + board_drawn
 
-        wins = torch.sum(our_scores > max_opp_scores).item()
-        ties = torch.sum(our_scores == max_opp_scores).item()
+            our_seven = hole_cards + full_board
+            our_key = max(
+                Hand(list(c)).get_hand_key()
+                for c in itertools.combinations(our_seven, 5)
+            )
 
-        final_odds = (wins + (ties / 2)) / simulations
+            opp_offset = cards_needed_board
+            opp_keys = []
+            for opp in range(num_opponents):
+                i0 = opp_offset + opp * 2
+                opp_hole = [
+                    Card(int(drawn[i0, 0]),     int(drawn[i0, 1])),
+                    Card(int(drawn[i0 + 1, 0]), int(drawn[i0 + 1, 1])),
+                ]
+                opp_seven = opp_hole + full_board
+                opp_key = max(
+                    Hand(list(c)).get_hand_key()
+                    for c in itertools.combinations(opp_seven, 5)
+                )
+                opp_keys.append(opp_key)
+
+            best_opp = max(opp_keys)
+            if our_key > best_opp:
+                wins += 1
+            elif our_key == best_opp:
+                ties += 1
+
+        final_odds = (wins + ties / 2) / simulations
 
         self.cache_odds = final_odds
         self.cache_cards = current_state

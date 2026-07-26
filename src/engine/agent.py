@@ -4,12 +4,12 @@ class Agent:
     kelly_alpha scales the Kelly fraction: effective_f = kelly_fraction * kelly_alpha.
     """
 
-    def __init__(self, name, kelly_alpha, aggression=1.0, is_tilted=False):
+    def __init__(self, name, kelly_alpha, aggression=1.0, is_tilted=False, _tilt_hands_remaining=0):
         self.name = name
         self.kelly_alpha = kelly_alpha
         self.aggression = aggression
         self.is_tilted = is_tilted
-        self._tilt_hands_remaining = 0
+        self._tilt_hands_remaining = _tilt_hands_remaining
 
     def score_hand(self, hole_cards, community_cards):
         raise NotImplementedError(f"{self.name}.score_hand() not implemented")
@@ -31,6 +31,7 @@ class Agent:
             self._tilt_hands_remaining -= 1
             if self._tilt_hands_remaining == 0:
                 self.is_tilted = False
+                self.aggression /= 1.5
 
     def to_dict(self):
         return {
@@ -38,6 +39,7 @@ class Agent:
             "kelly_alpha": self.kelly_alpha,
             "aggression": self.aggression,
             "is_tilted": self.is_tilted,
+            "_tilt_hands_remaining": self._tilt_hands_remaining,
         }
 
     @classmethod
@@ -47,6 +49,7 @@ class Agent:
             kelly_alpha=d["kelly_alpha"],
             aggression=d.get("aggression", 1.0),
             is_tilted=d.get("is_tilted", False),
+            _tilt_hands_remaining=d.get("_tilt_hands_remaining", 0)
         )
 
 
