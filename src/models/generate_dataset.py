@@ -177,37 +177,37 @@ def generate_pairs(n):
     return list_to_return
 
 
-# NOTE: module-level execution intentionally left unfixed — runs on import
-all_hands_raw = []
-all_hands_raw.extend([generate_hand(Deck()) for _ in range(100000)])
-all_hands_raw.extend(generate_pairs(50000))
-all_hands_raw.extend(generate_two_pair(25000))
-all_hands_raw.extend(generate_poker_samples(100000))
-all_hands_raw.extend(generate_trips(3000))
-all_hands_raw.extend(generate_straights(4000))
-all_hands_raw.extend(generate_flush(10000))
-all_hands_raw.extend(generate_boats(250))
-all_hands_raw.extend(generate_quads(250))
-all_hands_raw.extend(generate_straight_flush(1500))
-all_hands_raw.extend(generate_pairs(50000))
-all_hands_raw.extend(generate_poker_samples(100000))
-all_hands_raw.extend(generate_pairs(50000))
+if __name__ == "__main__":
+    all_hands_raw = []
+    all_hands_raw.extend([generate_hand(Deck()) for _ in range(100000)])
+    all_hands_raw.extend(generate_pairs(50000))
+    all_hands_raw.extend(generate_two_pair(25000))
+    all_hands_raw.extend(generate_poker_samples(100000))
+    all_hands_raw.extend(generate_trips(3000))
+    all_hands_raw.extend(generate_straights(4000))
+    all_hands_raw.extend(generate_flush(10000))
+    all_hands_raw.extend(generate_boats(250))
+    all_hands_raw.extend(generate_quads(250))
+    all_hands_raw.extend(generate_straight_flush(1500))
+    all_hands_raw.extend(generate_pairs(50000))
+    all_hands_raw.extend(generate_poker_samples(100000))
+    all_hands_raw.extend(generate_pairs(50000))
 
-final_data = convert_card_to_data(all_hands_raw)
+    final_data = convert_card_to_data(all_hands_raw)
 
-column_names = [
-    'C1_R', 'C1_S', 'C2_R', 'C2_S', 'C3_R', 'C3_S', 'C4_R', 'C4_S', 'C5_R', 'C5_S',
-    'Max_R_Freq', 'Max_S_Freq', 'Straight_Pot', 'Unique_Count', 'Label'
-]
+    column_names = [
+        'C1_R', 'C1_S', 'C2_R', 'C2_S', 'C3_R', 'C3_S', 'C4_R', 'C4_S', 'C5_R', 'C5_S',
+        'Max_R_Freq', 'Max_S_Freq', 'Straight_Pot', 'Unique_Count', 'Label'
+    ]
 
-df = pd.DataFrame(final_data, columns=column_names)
+    df = pd.DataFrame(final_data, columns=column_names)
 
-if not os.path.exists("data"):
-    os.makedirs("data")
+    if not os.path.exists("data"):
+        os.makedirs("data")
 
-df.to_csv("data/poker_training_daa_v1.csv", index=False)
+    df.to_csv("data/poker_training_daa_v1.csv", index=False)
 
-print("--- DATA GENERATION COMPLETE ---")
-print(f"Total Rows: {len(df)}")
-print(f"Features: {df.shape[1] - 1}")
-print(df["Label"].value_counts())
+    print("--- DATA GENERATION COMPLETE ---")
+    print(f"Total Rows: {len(df)}")
+    print(f"Features: {df.shape[1] - 1}")
+    print(df["Label"].value_counts())
