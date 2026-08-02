@@ -1,10 +1,19 @@
 import random
 
+from src.engine.preflop import chen_score
+
 
 class Agent:
     """
     Base agent. Subclasses implement score_hand() and decide().
     kelly_alpha scales the Kelly fraction: effective_f = kelly_fraction * kelly_alpha.
+
+    Future: decide() signature will likely need position (UTG/MP/CO/BTN/blinds)
+    and bet-size-relative-to-pot/stack as additional inputs, to support:
+    (1) position-based threshold tightening/loosening across all agents,
+    (2) bet-size-aware fold paths (see Fish.decide() for specifics),
+    (3) more realistic multi-street play generally. Not implemented yet —
+    current decide() logic is intentionally position-blind as a clean baseline.
     """
 
     def __init__(self, name, kelly_alpha, aggression=1.0, is_tilted=False, _tilt_hands_remaining=0):
@@ -148,8 +157,49 @@ class Fish(Agent):
 
 class Grinder(Agent):
     """Tight-aggressive. Conservative alpha = small, disciplined sizing."""
+
     def __init__(self):
         super().__init__(name="Grinder", kelly_alpha=0.25)
+
+    def score_hand(self, hole_cards, community_cards):
+        """Standard Chen formula. community_cards unused — preflop scoring only."""
+        score = chen_score(hole_cards[0], hole_cards[1])
+        self._cached_score = score
+        return score
+
+    def decide(self, win_odds, pot_size, cost_to_call, min_raise, bankroll):
+        """
+        Tight-aggressive: folds marginal hands readily, raises rather than calls
+        when it does play. Uses _cached_score set by score_hand() — same pattern
+        as Fish. Decisions are fully score-gated; no fold/raise paths fire
+        independent of hand strength.
+
+        Chen thresholds (K=8, true-rank gap):
+          score <  7              → fold (bet) / check (free) — trash, small pairs
+          7 <= score <= 9         → raise 30% / call 70% (bet); raise 25% / check 75% (free)
+          score >= 10             → raise 80% / call 20% (bet); raise 60% / check 40% (free)
+        """
+        score = getattr(self, "_cached_score", 0)
+        r = random.random()
+
+        if cost_to_call == 0:
+            if score >= 10 and r < 0.60:
+                return "raise", max(min_raise, int(pot_size * self.aggression))
+            if 7 <= score < 10 and r < 0.25:
+                return "raise", max(min_raise, int(pot_size * 0.75 * self.aggression))
+            return "check", 0
+
+        if score < 7:
+            return "fold", 0
+        if score <= 9:
+            if r < 0.30:
+                return "raise", max(min_raise, int(pot_size * 0.75 * self.aggression))
+            return "call", cost_to_call
+        # score >= 10
+        if r < 0.80:
+            return "raise", max(min_raise, int(pot_size * self.aggression))
+        return "call", cost_to_call
+
 
 
 class QuantGrid(Agent):
