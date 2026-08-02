@@ -238,6 +238,13 @@ class QuantGrid(Agent):
         sizing conservative; when QuantGrid's real scoring lands, this sizing
         logic carries forward unchanged.
 
+        Sizing quality is entirely gated on the caller supplying a real win
+        probability — QuantGrid computes nothing internally to produce win_odds.
+        The Chen-score path (fold/call/raise thresholds) and the Kelly-sizing
+        path are structurally independent and share no data. Until
+        calculate_win_odds() is fixed and wired in as the caller, win_odds is
+        arbitrary from QuantGrid's perspective.
+
         Thresholds (same as Grinder, temporary):
           score <  7              → fold / check
           7 <= score <= 9         → raise 30% / call 70% (bet); raise 25% / check (free)

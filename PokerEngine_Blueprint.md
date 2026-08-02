@@ -242,6 +242,8 @@ class Agent:
 
 **Current state:** Reuses `chen_score()` — scoring currently *identical* to Grinder's. Bet sizing differs (Kelly-fraction-scaled via `kelly_alpha=0.25`, rather than Grinder's flat raise amounts), but hand evaluation itself is not yet distinct. This is explicitly marked in-code as temporary and should not be read as QuantGrid's real personality.
 
+**Kelly sizing structure (audited 2026-08-02):** The Chen-score gating path (fold/call/raise thresholds) and the Kelly-sizing path are structurally independent — they share no data. `win_odds` in `decide()` is the raw parameter received from QuantGrid's caller; QuantGrid computes nothing internally to produce it. No `chen_score → win_odds` conversion exists anywhere in the code, and none is planned — the real fix is wiring Kelly sizing directly to `calculate_win_odds()` output once that function is fixed (Option B). Any test output that looked realistic (e.g. AA sizing to 203) reflected `win_odds` values hardcoded by a human who knew real poker equities (0.85 for AA), not values produced by QuantGrid. If wired today to the broken `calculate_win_odds()`, QuantGrid would size bets off garbage input.
+
 **Long-term design — two options, not yet decided which to build:**
 
 **Option A — 13×13 Preflop Range Grid + Postflop Decay** (original Blueprint spec): full 169-hand preflop grid with position-aware equity percentages, post-flop exponential decay per §4.6, SPR-bounded Kelly sizing.
@@ -337,7 +339,8 @@ Distinct from Phase V (which is QuantGrid-only, cross-session, hand-type-keyed).
 | Issue | Status | Priority |
 |---|---|---|
 | `calculate_win_odds()` feature_matrix all-zero infill | Open | **Highest** — blocks trustworthy win-probability output entirely |
-| `generate_dataset.py` module-level execution on import | Status depends on whether Phase 0 follow-up ran — verify before assuming fixed | High |
+| QuantGrid `decide()` has no `win_odds` source — Kelly-sizing formula is correct, but `win_odds` is externally supplied with no real caller yet; any current output reflects the caller's input, not a QuantGrid computation | Open | **High** — blocks any real evaluation of QuantGrid sizing until wired to a trustworthy `win_odds` source |
+| `generate_dataset.py` module-level execution on import | Fixed (commit 6839ce3) | — |
 | Tilt aggression compounds permanently across repeated tilt episodes (no reset to base) | Open | Medium |
 | `generate_boats()` indentation bug (pre-existing, causes duplicate row corruption in dataset generation) | Open, not yet addressed this session | Low (dataset-gen only, not runtime-critical) |
 | `record_action()` / `plot_session_results()` called in old `__main__` block but never defined | Open, likely dead code post-restructure — confirm still referenced anywhere before fixing | Low |
