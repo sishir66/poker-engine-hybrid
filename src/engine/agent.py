@@ -1,3 +1,6 @@
+import random
+
+
 class Agent:
     """
     Base agent. Subclasses implement score_hand() and decide().
@@ -102,7 +105,45 @@ class Fish(Agent):
         if (not suited) and (low_card < 9):     # double penalty for offsuit low hands
             score -= diff
 
+        self._cached_score = score
         return score
+
+    def decide(self, win_odds, pot_size, cost_to_call, min_raise, bankroll):
+        """
+        Loose-passive: calls too much, folds too rarely, raises infrequently.
+        Uses self._cached_score (set by score_hand()) rather than win_odds —
+        Fish's decisions are driven by its own biased heuristic, not probability.
+
+        Thresholds:
+          score >= 20  = "decent" hand for Fish — call/raise only, never fold
+          score <  20  = weak — 25% fold, 75% loose call
+
+        No bet: mostly check, rare raise on strong hands.
+        Bet required, decent hand: 25% raise / 75% call  (no fold path).
+        Bet required, weak hand:   25% fold  / 75% call  (loose — rare fold).
+        """
+        score = getattr(self, "_cached_score", 0)
+        r = random.random()
+
+        if cost_to_call == 0:
+            if score > 35 and r < 0.20:
+                raise_size = max(min_raise, int(pot_size * 0.75 * self.aggression))
+                return "raise", raise_size
+            return "check", 0
+
+        if score >= 20:
+            # Future: consider a bet-size/pot-relative fold path for strong hands —
+            # e.g. Fish occasionally folds even a good hand when facing a bet size
+            # disproportionate to pot/stack. Not implemented yet; needs bet_size and
+            # stack context that isn't currently modeled in decide()'s inputs.
+            if r < 0.25:
+                raise_size = max(min_raise, int(pot_size * 0.75 * self.aggression))
+                return "raise", raise_size
+            return "call", cost_to_call
+        else:
+            if r < 0.25:
+                return "fold", 0
+            return "call", cost_to_call
 
 
 class Grinder(Agent):
