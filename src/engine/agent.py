@@ -1,6 +1,7 @@
 import random
 
 from src.engine.preflop import chen_score
+from src.engine.risk import calculate_kelly_fraction
 
 
 class Agent:
@@ -206,9 +207,68 @@ class QuantGrid(Agent):
     """
     SPR-bounded Kelly. Alpha is a placeholder (0.25) until SPR
     (Stack-to-Pot Ratio) logic is implemented in risk.py.
+
+    See PokerEngine_Blueprint.md Phase V for the long-term scoring design.
     """
+
     def __init__(self):
         super().__init__(name="QuantGrid", kelly_alpha=0.25)
+
+    def score_hand(self, hole_cards, community_cards):
+        """
+        PLACEHOLDER — QuantGrid currently reuses Chen scoring, identical to
+        Grinder's approach. This is temporary. Per the Blueprint, QuantGrid's
+        real design uses either (a) a full 13x13 preflop range grid + post-flop
+        exponential decay math, or (b) direct calculate_win_odds() Monte Carlo
+        output once that function is fixed — see Blueprint Phase V for the
+        long-term plan. Do not treat this scoring as QuantGrid's real personality.
+        """
+        score = chen_score(hole_cards[0], hole_cards[1])
+        self._cached_score = score
+        return score
+
+    def decide(self, win_odds, pot_size, cost_to_call, min_raise, bankroll):
+        """
+        PLACEHOLDER — QuantGrid currently uses Chen-score thresholds identical
+        to Grinder's. This is temporary (see score_hand docstring above).
+
+        What distinguishes QuantGrid from Grinder here is bet sizing:
+        raise_size is Kelly-scaled (bankroll × kelly_fraction × kelly_alpha ×
+        aggression) rather than a flat pot multiple. kelly_alpha=0.25 keeps
+        sizing conservative; when QuantGrid's real scoring lands, this sizing
+        logic carries forward unchanged.
+
+        Thresholds (same as Grinder, temporary):
+          score <  7              → fold / check
+          7 <= score <= 9         → raise 30% / call 70% (bet); raise 25% / check (free)
+          score >= 10             → raise 80% / call 20% (bet); raise 60% / check (free)
+        """
+        score = getattr(self, "_cached_score", 0)
+        r = random.random()
+
+        kelly_f = calculate_kelly_fraction(win_odds, pot_size, cost_to_call)
+        kelly_raise = max(
+            min_raise,
+            int(bankroll * kelly_f * self.kelly_alpha * self.aggression)
+        )
+
+        if cost_to_call == 0:
+            if score >= 10 and r < 0.60:
+                return "raise", kelly_raise
+            if 7 <= score < 10 and r < 0.25:
+                return "raise", kelly_raise
+            return "check", 0
+
+        if score < 7:
+            return "fold", 0
+        if score <= 9:
+            if r < 0.30:
+                return "raise", kelly_raise
+            return "call", cost_to_call
+        # score >= 10
+        if r < 0.80:
+            return "raise", kelly_raise
+        return "call", cost_to_call
 
 
 class Whale(Agent):
