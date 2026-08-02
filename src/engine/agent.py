@@ -55,8 +55,54 @@ class Agent:
 
 class Fish(Agent):
     """Loose-passive. High alpha = bets aggressively relative to Kelly."""
+
     def __init__(self):
         super().__init__(name="Fish", kelly_alpha=0.75)
+
+    def score_hand(self, hole_cards, community_cards):
+        """
+        Legacy heuristic preserved verbatim from the original calculate_hands().
+        Intentional quirks:
+          - 'high card' check uses the LOW card (ascending sort index 0), so
+            the bonus only fires when BOTH cards exceed 10.
+          - Gap uses rank % 14, making Ace wrap to 0. AK/AQ/AJ/AT are patched
+            to use Ace=14 so they don't take the maximal gap penalty; all other
+            Ace hands (A2–A9) keep the wraparound behavior unchanged.
+        community_cards is ignored — this is a preflop-only heuristic.
+        """
+        r1, s1 = hole_cards[0].rank, hole_cards[0].suit
+        r2, s2 = hole_cards[1].rank, hole_cards[1].suit
+
+        is_pair = (r1 == r2)
+        num     = r1 + r2
+        low_card = min(r1, r2)   # original called this "high"; it returns the low card
+        suited  = (s1 == s2)
+
+        # Gap: patch Ace + broadway (10-13) to use true rank 14.
+        # Every other hand — including A2–A9 — uses rank % 14 as-is.
+        if 14 in (r1, r2):
+            other = r1 if r2 == 14 else r2
+            if 10 <= other <= 13:
+                diff = abs(14 - other)          # patched: AK=1, AQ=2, AJ=3, AT=4
+            else:
+                diff = abs((r1 % 14) - (r2 % 14))  # unpatched: A9→9, A5→5, etc.
+        else:
+            diff = abs((r1 % 14) - (r2 % 14))
+
+        score = 0
+        if is_pair:
+            score += 30
+        score += num
+        if low_card > 10:                       # fires only when both cards > 10
+            score += 8
+            score += 3 * (low_card - 10)
+        score -= diff
+        if suited:
+            score += 20
+        if (not suited) and (low_card < 10):    # double penalty for offsuit low hands
+            score -= diff
+
+        return score
 
 
 class Grinder(Agent):
