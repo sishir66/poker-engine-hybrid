@@ -99,7 +99,7 @@ class Fish(Agent):
         score -= diff
         if suited:
             score += 20
-        if (not suited) and (low_card < 10):    # double penalty for offsuit low hands
+        if (not suited) and (low_card < 9):     # double penalty for offsuit low hands
             score -= diff
 
         return score
