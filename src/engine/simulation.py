@@ -71,17 +71,6 @@ class PokerEngine:
         indices = np.array([np.random.choice(len(deck_arr), total_needed, replace=False) for _ in range(simulations)])
         sim_cards = deck_arr[indices]
 
-        # NOTE: feature_matrix infill not yet implemented — returns garbage (all zeros)
-        total_hands = simulations * (1 + num_opponents)
-        feature_matrix = np.zeros((total_hands, 14))
-
-        # [Broadcasting/Infilling logic for feature_matrix goes here]
-
-        # --- MLP path (feature_matrix above is still all-zeros / broken) ---
-        # Kept as a stub for future vectorized inference once infill is fixed.
-        # The comparison below bypasses it and uses deterministic Hand evaluation.
-
-        # --- Comparison: get_hand_key() tuples, kicker-aware ---
         wins = 0
         ties = 0
         for sim_idx in range(simulations):
