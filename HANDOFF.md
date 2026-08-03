@@ -1,4 +1,4 @@
-# PokerEngine Handoff — 2026-08-02
+# PokerEngine Handoff — 2026-08-03
 
 Reference alongside `PokerEngine_Blueprint.md`. Blueprint has design spec and full rationale; this file has current state, open work, blockers, and resume instructions.
 
@@ -7,9 +7,10 @@ Reference alongside `PokerEngine_Blueprint.md`. Blueprint has design spec and fu
 ## Repo state
 
 Branch: `main` — fully pushed, clean working tree.  
-Last commit: `11f3fe3` — Blueprint/docstring update documenting QuantGrid audit.
+Last commit: `3b4e339` — Fix calculate_win_odds() dead feature_matrix block.
 
 ```
+3b4e339 Fix calculate_win_odds() dead feature_matrix block
 11f3fe3 Document QuantGrid Kelly/win_odds structural disconnect (audit 2026-08-02)
 1599d89 Add QuantGrid placeholder (Chen scoring + Kelly-scaled sizing)
 cb02644 Implement Grinder score_hand()/decide()
@@ -65,20 +66,21 @@ The specific gap audited this session: Kelly sizing (`decide()` lines 249-253) r
 
 ## Blockers and next steps (in order)
 
-### 1. Fix `calculate_win_odds()` — **do this first, nothing else**
+### ~~1. Fix `calculate_win_odds()`~~ — **DONE (2026-08-03, commit `3b4e339`)**
 
-**File:** `src/engine/simulation.py`  
-**What's broken:** `feature_matrix = np.zeros((total_hands, 14))` is allocated but never filled. It's dead code — the Monte Carlo loop below constructs real `Hand` objects and compares `get_hand_key()` tuples directly — but the function's output has never been validated against known equity benchmarks. It may work or may have a subtle bug; we don't know yet.  
-**Why it's blocking:** Every downstream item that involves real win probability — QuantGrid Option B, any meaningful Kelly sizing, eventual test coverage of Monte Carlo — is blocked until this produces verified output.
+Dead `feature_matrix = np.zeros((total_hands, 14))` block removed. Monte Carlo loop was already correct; function now verified end-to-end:
+- AA vs random, heads-up: **85.75%** (ref 85.2%) ✓
+- AKs **67.70%** > KQs **62.43%** ✓
+- Forced-tie (Broadway board, both sides): **50.00%** exact ✓
+- wins+ties+losses == simulations (no silent drops) ✓
 
-**Verification bar (actual printed output required, not a description):**
-1. AA vs random opponent → win rate ≈ 85%
-2. AKs equity > KQs equity
-3. A forced-tie case → confirm `(wins + ties/2) / simulations` path fires correctly
+`calculate_win_odds()` is now a trustworthy win-probability source for the first time.
 
-### 2. Wire QuantGrid to `calculate_win_odds()` — **only after step 1 is verified**
+### 1. Wire QuantGrid to `calculate_win_odds()` — **current top priority (NOT started)**
 
 Blueprint §5.5 Option B. Pass real Monte Carlo output as `win_odds` into `QuantGrid.decide()`. At that point, Kelly sizing becomes meaningful. Remove the PLACEHOLDER labels from docstrings when this lands.
+
+**Background (from 2026-08-02 audit):** QuantGrid's Kelly formula in `decide()` is structurally correct — `f* = (b*p - q) / b`, clamped at 0 — but `win_odds` arrives as a raw parameter from the caller. QuantGrid computes nothing internally to produce it. No `chen_score → win_odds` mapping exists or is planned. Any prior test output that looked realistic (e.g. AA sizing to 203) used `win_odds=0.85` hardcoded by the human running the test. With `calculate_win_odds()` now verified, the fix is straightforward: call it from within `QuantGrid.decide()` rather than relying on the caller. Scope this as its own task — do not fold into any other work.
 
 ### 3. Then (order TBD by user)
 
@@ -103,8 +105,8 @@ Blueprint §5.5 Option B. Pass real Monte Carlo output as `win_odds` into `Quant
 
 | Issue | Blocks | Priority |
 |---|---|---|
-| `calculate_win_odds()` feature_matrix never filled — output unverified | QuantGrid Option B, real Kelly sizing, test coverage | **Highest** |
-| QuantGrid `decide()` has no real `win_odds` source | QuantGrid evaluation | **High** — blocked by above |
+| `calculate_win_odds()` feature_matrix never filled — output unverified | QuantGrid Option B, real Kelly sizing, test coverage | **Fixed 2026-08-03** (commit `3b4e339`) |
+| QuantGrid `decide()` has no real `win_odds` source | QuantGrid evaluation | **Highest** — unblocked by above fix; next task |
 | Tilt aggression compounds permanently across repeated tilt episodes | Tilt wiring | Medium |
 | `tests/test_engine.py` empty — no automated regression coverage | Catching future regressions | Medium |
 | `PokerEngine.__init__` crashes on fresh clone if model files absent | Fresh setup | Medium |

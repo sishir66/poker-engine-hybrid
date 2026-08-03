@@ -338,7 +338,7 @@ Distinct from Phase V (which is QuantGrid-only, cross-session, hand-type-keyed).
 
 | Issue | Status | Priority |
 |---|---|---|
-| `calculate_win_odds()` feature_matrix all-zero infill | Open | **Highest** — blocks trustworthy win-probability output entirely |
+| `calculate_win_odds()` feature_matrix all-zero infill | **Fixed** — verified 2026-08-03, commit `3b4e339` | Verified: AA 85.75% (ref 85.2%), AKs 67.70% > KQs 62.43%, forced-tie 50.00% exact, wins+ties+losses=simulations confirmed. Unblocks QuantGrid Option B. |
 | QuantGrid `decide()` has no `win_odds` source — Kelly-sizing formula is correct, but `win_odds` is externally supplied with no real caller yet; any current output reflects the caller's input, not a QuantGrid computation | Open | **High** — blocks any real evaluation of QuantGrid sizing until wired to a trustworthy `win_odds` source |
 | `generate_dataset.py` module-level execution on import | Fixed (commit 6839ce3) | — |
 | Tilt aggression compounds permanently across repeated tilt episodes (no reset to base) | Open | Medium |
@@ -348,4 +348,4 @@ Distinct from Phase V (which is QuantGrid-only, cross-session, hand-type-keyed).
 
 ---
 
-*Last updated: end of session covering Phase 0 (repo safety + correctness foundation), Fish and Grinder full implementation, QuantGrid placeholder, Chen formula verification.*
+*Last updated: 2026-08-03 — `calculate_win_odds()` feature_matrix bug fixed and verified (commit `3b4e339`); QuantGrid Option B next.*
