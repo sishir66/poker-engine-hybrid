@@ -256,9 +256,17 @@ class Agent:
 **Phase V — QuantGrid Empirical Hand Memory (future, documented, not built):**
 QuantGrid maintains a persistent `hand_type -> observed_win_rate` table, accumulating across sessions (keyed by hand type, not by opponent). Its `decide()` blends this empirical data with whatever static score it's using — now Option B's simulation output. Both are already on a `[0,1]` win-probability scale, so no unit-conversion step is needed; blending is direct arithmetic. Depends on `decide()` baseline logic existing first (satisfied, Option B implemented).
 
-### 5.6 Whale — Not Yet Implemented
+### 5.6 Whale — Implemented (commit `3242717`, 2026-08-07)
 
-Per original spec: deep-stack maniac, uniform random noise, maximum variance, unbounded Kelly (α = 1.0). No `score_hand()` or `decide()` written yet.
+Deep-stack maniac, full Kelly (α = 1.0). Uses the same real Monte Carlo `win_odds` signal as QuantGrid (Option B), not Chen — Whale understands the game and chooses to overbet; a heuristic-driven signal would make it Fish with a bigger stack.
+
+**Continuance vs QuantGrid — nearly identical, slightly looser:** fold floor is `kelly_f < 0.03` (vs QuantGrid's `0.05`), a consistent ~1–1.6 percentage-point loosening in the win-odds it implies depending on pot odds. The raise-weighted threshold (`kelly_f > 0.35`) and both probability splits (30/70, 80/20) are identical to QuantGrid's — recklessness is not expressed as playing weaker hands.
+
+**Sizing is where the personality lives:** `aggression=1.2` (a deterministic overbet bias) multiplied by a random band `uniform(0.8, 1.6)` (variance) applied to `kelly_raise`. Both factors scale the Kelly-derived amount; neither decides whether to act, so this stays compliant with §9's ban on score-independent branches. Free-check path (`cost_to_call == 0`) sizes as a pot-relative overbet (`pot_size * 1.5 * aggression`) rather than `bankroll * kelly_f * kelly_alpha`, because `risk.py` hardcodes `kelly_f = 1.0` on that path — with `alpha=1.0` that formula would shove the entire stack on every free-check raise. Whale overbets the pot; it doesn't reflexively jam.
+
+**Bankroll ceiling:** every raise path is wrapped in `clamp_to_bankroll()` (see §10 — discovered while implementing Whale, fixed as a shared addition to `risk.py` in commit `9b44ff4`, applied to Fish/Grinder/QuantGrid too).
+
+Verified: fold-floor boundary table confirms Whale folds a strict subset of QuantGrid's folds (10/27 vs 15/27 on the standard hand set); 0 bankroll violations across a stress sweep including 4× compounded tilt aggression; mean/spread of bet size materially larger than QuantGrid's at the same spot, both bounded ≤ bankroll.
 
 ### 5.7 Within-Session Opponent Adaptation (future, all agents, not built)
 
@@ -318,7 +326,7 @@ Distinct from Phase V (which is QuantGrid-only, cross-session, hand-type-keyed).
 
 * **Phase V: QuantGrid Real Scoring** — Option B implemented, see §5.5 for full detail (empirical memory sub-feature still not built).
 
-* **Phase VI: Whale Implementation** — not started, see §5.6.
+* **Phase VI: Whale Implementation** — implemented, see §5.6.
 
 * **Phase VII: `tests/test_engine.py`** — currently empty. All verification this session was manual (inline scripts, printed output reviewed by hand). Converting these into permanent pytest assertions is outstanding — needed so regressions are caught automatically rather than requiring re-verification by hand each time.
 
@@ -341,12 +349,13 @@ Distinct from Phase V (which is QuantGrid-only, cross-session, hand-type-keyed).
 |---|---|---|
 | `calculate_win_odds()` feature_matrix all-zero infill | **Fixed** — verified 2026-08-03, commit `3b4e339` | Verified: AA 85.75% (ref 85.2%), AKs 67.70% > KQs 62.43%, forced-tie 50.00% exact, wins+ties+losses=simulations confirmed. Unblocks QuantGrid Option B. |
 | QuantGrid `decide()` has no `win_odds` source | **Fixed** — Option B implemented and verified 2026-08-07, commit `6c31c50`. See §5.5. | — |
+| No agent's raise sizing was bounded by bankroll — Fish/Grinder ignored bankroll entirely (sized off `pot_size`); QuantGrid was safe only by luck at `alpha=0.25`. Discovered while implementing Whale (`alpha=1.0` made the gap immediately visible). | **Fixed** — `clamp_to_bankroll()` added to `risk.py` and applied to Fish/Grinder/QuantGrid, commit `9b44ff4`; Whale built with the clamp from the start, commit `3242717`. Verified 2026-08-07: existing agents produce identical output in normal play, previously-overflowing edge cases now clamp correctly. | — |
 | `generate_dataset.py` module-level execution on import | Fixed (commit 6839ce3) | — |
-| Tilt aggression compounds permanently across repeated tilt episodes (no reset to base) | Open | Medium |
+| Tilt aggression compounds permanently across repeated tilt episodes (no reset to base) | Open — the bankroll clamp (above) bounds the *consequence* of unbounded aggression growth, but the underlying compounding logic itself is still unfixed | Medium |
 | `generate_boats()` indentation bug (pre-existing, causes duplicate row corruption in dataset generation) | Open, not yet addressed this session | Low (dataset-gen only, not runtime-critical) |
 | `record_action()` / `plot_session_results()` called in old `__main__` block but never defined | Open, likely dead code post-restructure — confirm still referenced anywhere before fixing | Low |
-| `tests/test_engine.py` empty — no automated regression coverage | Open | Medium — increasingly important as more agents get built |
+| `tests/test_engine.py` empty — no automated regression coverage | Open | **Highest** — next task; increasingly important now that all four agents exist |
 
 ---
 
-*Last updated: 2026-08-07 — QuantGrid Option B implemented and verified (commit `6c31c50`); Whale implementation next.*
+*Last updated: 2026-08-07 — Whale implemented and verified (commit `3242717`); shared bankroll clamp added (commit `9b44ff4`). Next: `tests/test_engine.py` conversion, tilt wiring + compounding fix, `PokerEngine.__init__` crash bug.*
