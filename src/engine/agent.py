@@ -1,7 +1,7 @@
 import random
 
 from src.engine.preflop import chen_score
-from src.engine.risk import calculate_kelly_fraction
+from src.engine.risk import calculate_kelly_fraction, clamp_to_bankroll
 
 
 class Agent:
@@ -137,7 +137,9 @@ class Fish(Agent):
 
         if cost_to_call == 0:
             if score > 35 and r < 0.20:
-                raise_size = max(min_raise, int(pot_size * 0.75 * self.aggression))
+                raise_size = clamp_to_bankroll(
+                    max(min_raise, int(pot_size * 0.75 * self.aggression)), bankroll
+                )
                 return "raise", raise_size
             return "check", 0
 
@@ -147,7 +149,9 @@ class Fish(Agent):
             # disproportionate to pot/stack. Not implemented yet; needs bet_size and
             # stack context that isn't currently modeled in decide()'s inputs.
             if r < 0.25:
-                raise_size = max(min_raise, int(pot_size * 0.75 * self.aggression))
+                raise_size = clamp_to_bankroll(
+                    max(min_raise, int(pot_size * 0.75 * self.aggression)), bankroll
+                )
                 return "raise", raise_size
             return "call", cost_to_call
         else:
@@ -185,20 +189,28 @@ class Grinder(Agent):
 
         if cost_to_call == 0:
             if score >= 10 and r < 0.60:
-                return "raise", max(min_raise, int(pot_size * self.aggression))
+                return "raise", clamp_to_bankroll(
+                    max(min_raise, int(pot_size * self.aggression)), bankroll
+                )
             if 7 <= score < 10 and r < 0.25:
-                return "raise", max(min_raise, int(pot_size * 0.75 * self.aggression))
+                return "raise", clamp_to_bankroll(
+                    max(min_raise, int(pot_size * 0.75 * self.aggression)), bankroll
+                )
             return "check", 0
 
         if score < 7:
             return "fold", 0
         if score <= 9:
             if r < 0.30:
-                return "raise", max(min_raise, int(pot_size * 0.75 * self.aggression))
+                return "raise", clamp_to_bankroll(
+                    max(min_raise, int(pot_size * 0.75 * self.aggression)), bankroll
+                )
             return "call", cost_to_call
         # score >= 10
         if r < 0.80:
-            return "raise", max(min_raise, int(pot_size * self.aggression))
+            return "raise", clamp_to_bankroll(
+                max(min_raise, int(pot_size * self.aggression)), bankroll
+            )
         return "call", cost_to_call
 
 
@@ -271,9 +283,9 @@ class QuantGrid(Agent):
         )
 
         kelly_f = calculate_kelly_fraction(win_odds, pot_size, cost_to_call)
-        kelly_raise = max(
-            min_raise,
-            int(bankroll * kelly_f * self.kelly_alpha * self.aggression)
+        kelly_raise = clamp_to_bankroll(
+            max(min_raise, int(bankroll * kelly_f * self.kelly_alpha * self.aggression)),
+            bankroll,
         )
         r = random.random()
 
