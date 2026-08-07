@@ -238,22 +238,23 @@ class Agent:
 
 **Deliberate design note:** Chen's pair floor (5) means 22–66 all fold to any bet under this scheme — a conscious, accepted tight stance, not an artifact to "fix." Randomness is bounded (single draw per decision, score-gated probability) rather than Fish's wide unconditional swings — reflects a disciplined, consistent player. No unconditional/score-independent branches exist (lesson carried over directly from the Fish fold bug).
 
-### 5.5 QuantGrid — Placeholder Only (temporary implementation)
+### 5.5 QuantGrid — Option B Implemented (commit `6c31c50`, 2026-08-07)
 
-**Current state:** Reuses `chen_score()` — scoring currently *identical* to Grinder's. Bet sizing differs (Kelly-fraction-scaled via `kelly_alpha=0.25`, rather than Grinder's flat raise amounts), but hand evaluation itself is not yet distinct. This is explicitly marked in-code as temporary and should not be read as QuantGrid's real personality.
+**Current state:** QuantGrid computes `win_odds` internally via `calculate_win_odds()` (Monte Carlo simulation) rather than receiving it from a caller. `score_hand()` still calls `chen_score()` and caches the result for interface consistency with the other agents, but the returned score is **vestigial** — `decide()` no longer reads it, and Chen no longer gates any fold/call/raise decision. `score_hand()`'s real job under Option B is caching `hole_cards`/`community_cards` for `decide()` to pass into `calculate_win_odds()`.
 
-**Kelly sizing structure (audited 2026-08-02):** The Chen-score gating path (fold/call/raise thresholds) and the Kelly-sizing path are structurally independent — they share no data. `win_odds` in `decide()` is the raw parameter received from QuantGrid's caller; QuantGrid computes nothing internally to produce it. No `chen_score → win_odds` conversion exists anywhere in the code, and none is planned — the real fix is wiring Kelly sizing directly to `calculate_win_odds()` output once that function is fixed (Option B). Any test output that looked realistic (e.g. AA sizing to 203) reflected `win_odds` values hardcoded by a human who knew real poker equities (0.85 for AA), not values produced by QuantGrid. If wired today to the broken `calculate_win_odds()`, QuantGrid would size bets off garbage input.
+**Decision tree — gated on `kelly_f`, not a fixed `win_odds` cutoff:** `calculate_kelly_fraction()` (`risk.py`) already incorporates the real pot odds for the decision via `b = pot_size / cost_to_call`, so gating on `kelly_f` magnitude (rather than a fixed `win_odds` threshold) correctly adapts to the price being offered — a hand that's a fold at 1:1 pot odds may be a clear call at 5:1. A fixed `win_odds` cutoff would get both cases wrong.
 
-**Long-term design — two options, not yet decided which to build:**
+- `cost_to_call > 0`: `kelly_f < 0.05` → fold; `0.05 ≤ kelly_f ≤ 0.35` → raise 30% / call 70%; `kelly_f > 0.35` → raise 80% / call 20%.
+- `cost_to_call == 0` (free to check): `calculate_kelly_fraction()` hardcodes `kelly_f = 1.0` for this case, so it carries no information — gated on `win_odds` directly instead: `win_odds < 0.50` → check; `win_odds ≥ 0.50` → raise 60% / check 40%.
 
-**Option A — 13×13 Preflop Range Grid + Postflop Decay** (original Blueprint spec): full 169-hand preflop grid with position-aware equity percentages, post-flop exponential decay per §4.6, SPR-bounded Kelly sizing.
+**Threshold values are deliberate starting points, not final.** The `0.05` fold floor and `0.35` raise-weighted floor both sit a margin above their exact mathematical breakpoints (0.0 = Kelly breakeven). This is a personality/risk-tuning choice for QuantGrid — same category as Fish's A9o double-penalty threshold tuning (§4.3) — not a formula correction. Revisit both values once real Phase IV simulation data (BB/100 results across agents) exists to justify tightening or loosening them.
 
-**Option B — Direct Monte Carlo (currently favored):** Bypass hand-tuned heuristics entirely once `calculate_win_odds()` is fixed and trustworthy — QuantGrid's real edge would come from *using the actual simulation engine* rather than any static chart, which is thematically fitting: Fish and Grinder are heuristic-driven by design (that's their character), QuantGrid's identity is being the mathematically rigorous agent, so wiring it directly into real simulation output is the natural fit once that output can be trusted.
+**Signature diverges from the `Agent` base class — intentional.** `QuantGrid.decide(self, pot_size, cost_to_call, min_raise, bankroll)` drops the `win_odds` parameter present in `Agent.decide()`'s signature, since QuantGrid now computes it internally. `QuantGrid.__init__(self, engine)` also takes a `PokerEngine` instance, which Fish/Grinder/Whale do not. Not a bug — Python doesn't enforce subclass signature parity, and any caller passing `win_odds` positionally to `QuantGrid.decide()` will get a `TypeError` rather than silently wrong behavior.
 
-**Prerequisites for Option B specifically:** fix `calculate_win_odds()` feature-matrix bug (§4.5); validate Monte Carlo output against known equity tables; profile simulation speed (1000 sims/decision may be too slow for real-time play without the C core, §8).
+**Option A (13×13 preflop range grid + postflop decay)** remains undesigned and unbuilt — Option B was chosen and implemented instead. Left here for historical reference only; not planned.
 
 **Phase V — QuantGrid Empirical Hand Memory (future, documented, not built):**
-QuantGrid maintains a persistent `hand_type -> observed_win_rate` table, accumulating across sessions (keyed by hand type, not by opponent). Its `decide()` blends this empirical data with whatever static score it's using (Chen, Option A grid, or Option B simulation output), weighted toward empirical data as sample size grows and toward the static score when data is thin. Framing note: this isn't "two independent sources of truth" — the heuristic is a cheap approximation, and accumulated empirical data is a more accurate replacement for it as evidence builds, similar to how real solvers/serious players say "theory says X, but in practice Y wins more." Depends on Chen/decide() baseline logic existing first (satisfied) and ideally on Option B being resolved (not yet).
+QuantGrid maintains a persistent `hand_type -> observed_win_rate` table, accumulating across sessions (keyed by hand type, not by opponent). Its `decide()` blends this empirical data with whatever static score it's using — now Option B's simulation output. Both are already on a `[0,1]` win-probability scale, so no unit-conversion step is needed; blending is direct arithmetic. Depends on `decide()` baseline logic existing first (satisfied, Option B implemented).
 
 ### 5.6 Whale — Not Yet Implemented
 
@@ -315,7 +316,7 @@ Distinct from Phase V (which is QuantGrid-only, cross-session, hand-type-keyed).
 * **Phase IV: Environment Execution & Performance Analytics** (not started)
   * Cash/Tournament multi-agent loops, BB/100 and ICM survival tracking.
 
-* **Phase V: QuantGrid Real Scoring** — see §5.5 for full detail (design undecided: Option A vs B; empirical memory sub-feature documented).
+* **Phase V: QuantGrid Real Scoring** — Option B implemented, see §5.5 for full detail (empirical memory sub-feature still not built).
 
 * **Phase VI: Whale Implementation** — not started, see §5.6.
 
@@ -339,7 +340,7 @@ Distinct from Phase V (which is QuantGrid-only, cross-session, hand-type-keyed).
 | Issue | Status | Priority |
 |---|---|---|
 | `calculate_win_odds()` feature_matrix all-zero infill | **Fixed** — verified 2026-08-03, commit `3b4e339` | Verified: AA 85.75% (ref 85.2%), AKs 67.70% > KQs 62.43%, forced-tie 50.00% exact, wins+ties+losses=simulations confirmed. Unblocks QuantGrid Option B. |
-| QuantGrid `decide()` has no `win_odds` source — Kelly-sizing formula is correct, but `win_odds` is externally supplied with no real caller yet; any current output reflects the caller's input, not a QuantGrid computation | Open | **High** — blocks any real evaluation of QuantGrid sizing until wired to a trustworthy `win_odds` source |
+| QuantGrid `decide()` has no `win_odds` source | **Fixed** — Option B implemented and verified 2026-08-07, commit `6c31c50`. See §5.5. | — |
 | `generate_dataset.py` module-level execution on import | Fixed (commit 6839ce3) | — |
 | Tilt aggression compounds permanently across repeated tilt episodes (no reset to base) | Open | Medium |
 | `generate_boats()` indentation bug (pre-existing, causes duplicate row corruption in dataset generation) | Open, not yet addressed this session | Low (dataset-gen only, not runtime-critical) |
@@ -348,4 +349,4 @@ Distinct from Phase V (which is QuantGrid-only, cross-session, hand-type-keyed).
 
 ---
 
-*Last updated: 2026-08-03 — `calculate_win_odds()` feature_matrix bug fixed and verified (commit `3b4e339`); QuantGrid Option B next.*
+*Last updated: 2026-08-07 — QuantGrid Option B implemented and verified (commit `6c31c50`); Whale implementation next.*
