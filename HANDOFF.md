@@ -1,4 +1,4 @@
-# PokerEngine Handoff — 2026-08-03
+# PokerEngine Handoff — 2026-08-07
 
 Reference alongside `PokerEngine_Blueprint.md`. Blueprint has design spec and full rationale; this file has current state, open work, blockers, and resume instructions.
 
@@ -7,9 +7,10 @@ Reference alongside `PokerEngine_Blueprint.md`. Blueprint has design spec and fu
 ## Repo state
 
 Branch: `main` — fully pushed, clean working tree.  
-Last commit: `3b4e339` — Fix calculate_win_odds() dead feature_matrix block.
+Last commit: `6c31c50` — Wire QuantGrid.decide() to calculate_win_odds() (Option B).
 
 ```
+6c31c50 Wire QuantGrid.decide() to calculate_win_odds() (Option B)
 3b4e339 Fix calculate_win_odds() dead feature_matrix block
 11f3fe3 Document QuantGrid Kelly/win_odds structural disconnect (audit 2026-08-02)
 1599d89 Add QuantGrid placeholder (Chen scoring + Kelly-scaled sizing)
@@ -36,17 +37,13 @@ a7e565d Initial commit: Modular architecture layout
 | `Agent` base class | `src/engine/agent.py` | `check_tilt()` stub exists but not wired into `decide()`. `to_dict()`/`from_dict()` complete. |
 | `Fish` | `src/engine/agent.py` | Legacy heuristic with intentional biases preserved. See Blueprint §4.3. |
 | `Grinder` | `src/engine/agent.py` | Chen formula, tight-aggressive thresholds. |
+| `QuantGrid` | `src/engine/agent.py` | Option B implemented (commit `6c31c50`, 2026-08-07). Computes `win_odds` internally via `calculate_win_odds()`; decisions gated on `kelly_f` magnitude, not Chen score. See Blueprint §5.5. |
 | Hand evaluator (`get_hand_key()`) | `src/engine/simulation.py` | Tuple-based, kicker-aware, deterministic. MLP retired. |
 | Dataset generation import fix | `src/models/generate_dataset.py` | `if __name__ == "__main__":` guard added (commit 6839ce3). |
 
 ---
 
 ## What's in progress (committed but explicitly temporary or incomplete)
-
-**QuantGrid — placeholder committed, real implementation not started.**  
-`src/engine/agent.py`. Both `score_hand()` and `decide()` are marked PLACEHOLDER in docstrings. Current behavior: Chen scoring (identical to Grinder), Kelly-scaled raise sizing. Not QuantGrid's real personality — do not treat as final or refine without explicit direction.
-
-The specific gap audited this session: Kelly sizing (`decide()` lines 249-253) receives `win_odds` raw from its caller and computes nothing internally. No `chen_score → win_odds` mapping exists. Test output that looked correct (AA → raise 203) used `win_odds=0.85` hardcoded by a human, not produced by QuantGrid. **Blocked by `calculate_win_odds()` fix below before this can be wired to anything real.**
 
 **`check_tilt()` — stub committed, not wired.**  
 `src/engine/agent.py` lines 33-47. Logic is correct but `decide()` on all agents ignores `is_tilted` entirely. Not started as a wiring task.
@@ -57,9 +54,8 @@ The specific gap audited this session: Kelly sizing (`decide()` lines 249-253) r
 
 | Item | Why not started |
 |---|---|
-| `Whale.score_hand()` / `Whale.decide()` | Both raise `NotImplementedError`. Intentionally deferred — Blueprint §5.6. |
+| `Whale.score_hand()` / `Whale.decide()` | Both raise `NotImplementedError`. Intentionally deferred — Blueprint §5.6. **Next task.** |
 | `tests/test_engine.py` | Empty stub. All verification done manually with inline scripts. Needs real pytest assertions. Blueprint §10. |
-| QuantGrid Option B (wire to `calculate_win_odds()`) | Blocked — see below. |
 | Position-aware `decide()` for all agents | Noted in `Agent` base class docstring. Not designed yet. |
 
 ---
@@ -76,15 +72,16 @@ Dead `feature_matrix = np.zeros((total_hands, 14))` block removed. Monte Carlo l
 
 `calculate_win_odds()` is now a trustworthy win-probability source for the first time.
 
-### 1. Wire QuantGrid to `calculate_win_odds()` — **current top priority (NOT started)**
+### ~~2. Wire QuantGrid to `calculate_win_odds()`~~ — **DONE (2026-08-07, commit `6c31c50`)**
 
-Blueprint §5.5 Option B. Pass real Monte Carlo output as `win_odds` into `QuantGrid.decide()`. At that point, Kelly sizing becomes meaningful. Remove the PLACEHOLDER labels from docstrings when this lands.
+Blueprint §5.5 Option B implemented. `QuantGrid.decide()` computes `win_odds` internally via `calculate_win_odds()` and gates fold/call/raise on `kelly_f` magnitude (real pot odds, not a fixed `win_odds` cutoff): `kelly_f < 0.05` fold, `0.05–0.35` call-weighted, `>0.35` raise-weighted. Free-check path gated on `win_odds ≥ 0.50` since `kelly_f` is hardcoded to `1.0` when `cost_to_call == 0`. Chen score is now vestigial in `QuantGrid.score_hand()` — cached for interface consistency, no longer used by `decide()`. Both thresholds are documented as starting points, to be revisited against Phase IV BB/100 data. Full detail in Blueprint §5.5.
 
-**Background (from 2026-08-02 audit):** QuantGrid's Kelly formula in `decide()` is structurally correct — `f* = (b*p - q) / b`, clamped at 0 — but `win_odds` arrives as a raw parameter from the caller. QuantGrid computes nothing internally to produce it. No `chen_score → win_odds` mapping exists or is planned. Any prior test output that looked realistic (e.g. AA sizing to 203) used `win_odds=0.85` hardcoded by the human running the test. With `calculate_win_odds()` now verified, the fix is straightforward: call it from within `QuantGrid.decide()` rather than relying on the caller. Scope this as its own task — do not fold into any other work.
+### 3. `Whale` implementation — **current top priority (NOT started)**
 
-### 3. Then (order TBD by user)
+Blueprint §5.6. Deep-stack maniac personality, uniform random noise, unbounded Kelly (α=1.0). No `score_hand()` or `decide()` written yet.
 
-- `Whale` implementation (Blueprint §5.6)
+### 4. Then (order TBD by user, unless otherwise specified)
+
 - `tests/test_engine.py` — convert manual verification scripts into pytest assertions
 - Wire `check_tilt()` into `decide()` on all agents + fix tilt aggression compounding bug (Blueprint §5.2)
 - `PokerEngine.__init__` crash on missing model files (currently will crash on fresh clone)
@@ -96,7 +93,8 @@ Blueprint §5.5 Option B. Pass real Monte Carlo output as `win_odds` into `Quant
 - **Never add `Co-Authored-By: Claude` to commits.** See `CLAUDE.md`.
 - **Fish's biases are intentional, not bugs.** `low_card = min(r1, r2)` returning the low card, and `rank % 14` Ace wrap on A2–A9, are preserved from the original heuristic on purpose. Only AK/AQ/AJ/AT were patched. See Blueprint §4.3.
 - **`get_hand_key()` tuple comparison is the canonical hand evaluator.** The MLP (`src/models/`) is dead code retained in the repo but bypassed entirely. Do not re-introduce MLP into the eval path.
-- **QuantGrid scoring docstrings say PLACEHOLDER explicitly.** Do not refine QuantGrid's Chen thresholds or introduce a `chen_score → win_odds` mapping — the real fix is wiring to `calculate_win_odds()` (Option B), not papering over the gap with a conversion formula.
+- **QuantGrid's Chen score is now vestigial.** `score_hand()` still calls `chen_score()` and caches it, but `decide()` (Option B, implemented) no longer reads it — decisions are gated on `kelly_f` magnitude instead. Don't reintroduce Chen-score gating into `QuantGrid.decide()`.
+- **`QuantGrid.decide()` signature diverges from the `Agent` base class on purpose.** It drops the `win_odds` parameter (computed internally now) and `QuantGrid.__init__()` takes an `engine` argument that other agents don't. Not a bug — see Blueprint §5.5.
 - **Verification bar is always: real printed output, not a summary.** Every prior implementation was confirmed with actual script output pasted back. Same standard applies going forward.
 
 ---
@@ -106,11 +104,11 @@ Blueprint §5.5 Option B. Pass real Monte Carlo output as `win_odds` into `Quant
 | Issue | Blocks | Priority |
 |---|---|---|
 | `calculate_win_odds()` feature_matrix never filled — output unverified | QuantGrid Option B, real Kelly sizing, test coverage | **Fixed 2026-08-03** (commit `3b4e339`) |
-| QuantGrid `decide()` has no real `win_odds` source | QuantGrid evaluation | **Highest** — unblocked by above fix; next task |
+| QuantGrid `decide()` has no real `win_odds` source | QuantGrid evaluation | **Fixed 2026-08-07** (commit `6c31c50`) |
+| `Whale` not implemented | Whale agent | **Highest** — next task, not started by design until now |
 | Tilt aggression compounds permanently across repeated tilt episodes | Tilt wiring | Medium |
 | `tests/test_engine.py` empty — no automated regression coverage | Catching future regressions | Medium |
 | `PokerEngine.__init__` crashes on fresh clone if model files absent | Fresh setup | Medium |
-| `Whale` not implemented | Whale agent | Low — not started by design |
 | `generate_boats()` indentation bug in dataset generation | Dataset quality | Low — runtime not affected |
 
 Full details in `PokerEngine_Blueprint.md §10`.
