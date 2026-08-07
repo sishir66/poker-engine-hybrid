@@ -205,74 +205,90 @@ class Grinder(Agent):
 
 class QuantGrid(Agent):
     """
-    SPR-bounded Kelly. Alpha is a placeholder (0.25) until SPR
-    (Stack-to-Pot Ratio) logic is implemented in risk.py.
+    Monte Carlo Kelly agent (Option B). Computes win probability via real
+    simulation rather than static heuristics — QuantGrid's identity is being
+    the mathematically rigorous agent, in contrast to Fish (loose heuristic)
+    and Grinder (tight Chen formula).
 
-    See PokerEngine_Blueprint.md Phase V for the long-term scoring design.
+    Requires a PokerEngine instance at construction time for calculate_win_odds().
+    See PokerEngine_Blueprint.md §5.5 for full design rationale.
     """
 
-    def __init__(self):
+    def __init__(self, engine):
         super().__init__(name="QuantGrid", kelly_alpha=0.25)
+        self._engine = engine
 
     def score_hand(self, hole_cards, community_cards):
         """
-        PLACEHOLDER — QuantGrid currently reuses Chen scoring, identical to
-        Grinder's approach. This is temporary. Per the Blueprint, QuantGrid's
-        real design uses either (a) a full 13x13 preflop range grid + post-flop
-        exponential decay math, or (b) direct calculate_win_odds() Monte Carlo
-        output once that function is fixed — see Blueprint Phase V for the
-        long-term plan. Do not treat this scoring as QuantGrid's real personality.
+        Caches hole_cards and community_cards for use by decide(), which calls
+        calculate_win_odds() internally. Also computes and caches the Chen score
+        (returned for interface compatibility) but decide() does not use it —
+        Chen no longer gates QuantGrid's decision tree under Option B.
+
+        Phase V (empirical hand memory, Blueprint §5.5): when built, the blend
+        of empirical win rate and simulation output will both be on [0,1] — no
+        unit-conversion needed. This implementation is compatible with Phase V
+        as-is.
         """
+        self._hole_cards = hole_cards
+        self._community_cards = community_cards
         score = chen_score(hole_cards[0], hole_cards[1])
         self._cached_score = score
         return score
 
-    def decide(self, win_odds, pot_size, cost_to_call, min_raise, bankroll):
+    def decide(self, pot_size, cost_to_call, min_raise, bankroll):
         """
-        PLACEHOLDER — QuantGrid currently uses Chen-score thresholds identical
-        to Grinder's. This is temporary (see score_hand docstring above).
+        Option B: win_odds computed internally via Monte Carlo simulation.
+        Signature differs from base Agent.decide() — win_odds parameter is
+        removed; callers must not pass it positionally.
 
-        What distinguishes QuantGrid from Grinder here is bet sizing:
-        raise_size is Kelly-scaled (bankroll × kelly_fraction × kelly_alpha ×
-        aggression) rather than a flat pot multiple. kelly_alpha=0.25 keeps
-        sizing conservative; when QuantGrid's real scoring lands, this sizing
-        logic carries forward unchanged.
+        score_hand() must be called before decide() to cache hole/community
+        cards (same call-order contract as Fish and Grinder, which cache
+        _cached_score before decide() reads it).
 
-        Sizing quality is entirely gated on the caller supplying a real win
-        probability — QuantGrid computes nothing internally to produce win_odds.
-        The Chen-score path (fold/call/raise thresholds) and the Kelly-sizing
-        path are structurally independent and share no data. Until
-        calculate_win_odds() is fixed and wired in as the caller, win_odds is
-        arbitrary from QuantGrid's perspective.
+        Decision tree — gated on kelly_f = calculate_kelly_fraction(win_odds, pot, cost):
 
-        Thresholds (same as Grinder, temporary):
-          score <  7              → fold / check
-          7 <= score <= 9         → raise 30% / call 70% (bet); raise 25% / check (free)
-          score >= 10             → raise 80% / call 20% (bet); raise 60% / check (free)
+          cost_to_call == 0 (free):
+            win_odds < 0.50  → check
+            win_odds >= 0.50 → raise 60% / check 40%
+            (kelly_f = 1.0 when cost=0 per risk.py, so win_odds used directly)
+
+          cost_to_call > 0:
+            kelly_f < 0.05   → fold
+            0.05 ≤ kf ≤ 0.35 → raise 30% / call 70%
+            kelly_f > 0.35   → raise 80% / call 20%
+
+        Threshold rationale: both floors (0.05 fold, 0.35 raise) add a safety
+        margin above their mathematical breakpoints (0.0 = exact Kelly breakeven;
+        0.30 = original derivation). This is personality tuning — same category
+        as Fish's A9o double-penalty threshold (Blueprint §4.3) — not a formula
+        correction. Both values are starting points to be re-evaluated against
+        Phase IV simulation data (BB/100 results across agents).
         """
-        score = getattr(self, "_cached_score", 0)
-        r = random.random()
+        win_odds = self._engine.calculate_win_odds(
+            getattr(self, '_hole_cards', []),
+            getattr(self, '_community_cards', []),
+        )
 
         kelly_f = calculate_kelly_fraction(win_odds, pot_size, cost_to_call)
         kelly_raise = max(
             min_raise,
             int(bankroll * kelly_f * self.kelly_alpha * self.aggression)
         )
+        r = random.random()
 
         if cost_to_call == 0:
-            if score >= 10 and r < 0.60:
-                return "raise", kelly_raise
-            if 7 <= score < 10 and r < 0.25:
+            if win_odds >= 0.50 and r < 0.60:
                 return "raise", kelly_raise
             return "check", 0
 
-        if score < 7:
+        if kelly_f < 0.05:
             return "fold", 0
-        if score <= 9:
+        if kelly_f <= 0.35:
             if r < 0.30:
                 return "raise", kelly_raise
             return "call", cost_to_call
-        # score >= 10
+        # kelly_f > 0.35
         if r < 0.80:
             return "raise", kelly_raise
         return "call", cost_to_call
