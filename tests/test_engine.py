@@ -385,6 +385,40 @@ class TestQuantGridThresholds:
         assert "fold" not in actions
         assert actions == {"raise", "check"}
 
+    # -- Proportion-bound tests -----------------------------------------
+    # The majority-only checks above (e.g. "raise count > call count")
+    # would still pass even if the documented split drifted substantially
+    # (e.g. 80/20 -> 55/45 is still a "raise majority"). These assert the
+    # actual documented ratios directly, within a generous tolerance band
+    # (~5 std devs at n=200 for every tier below) chosen to be effectively
+    # immune to false positives while still catching real ratio drift.
+
+    def test_call_weighted_ratio_matches_30_70(self):
+        win_odds = win_odds_for_kelly_f(0.20, pot_size=200, cost_to_call=100)
+        n = 200
+        raises = sum(
+            self._decide(win_odds, 200, 100)[0] == "raise" for _ in range(n)
+        )
+        rate = raises / n
+        assert 0.15 <= rate <= 0.45  # documented: 30% raise
+
+    def test_raise_weighted_ratio_matches_80_20(self):
+        win_odds = win_odds_for_kelly_f(0.60, pot_size=200, cost_to_call=100)
+        n = 200
+        raises = sum(
+            self._decide(win_odds, 200, 100)[0] == "raise" for _ in range(n)
+        )
+        rate = raises / n
+        assert 0.65 <= rate <= 0.95  # documented: 80% raise
+
+    def test_free_check_ratio_matches_60_40(self):
+        n = 200
+        raises = sum(
+            self._decide(0.75, 200, 0)[0] == "raise" for _ in range(n)
+        )
+        rate = raises / n
+        assert 0.45 <= rate <= 0.75  # documented: 60% raise
+
 
 # =============================================================================
 # Group 6 — Whale decision tree (via FakeEngine)
@@ -448,6 +482,39 @@ class TestWhaleThresholds:
 
         assert qg_action == "fold"
         assert whale_action != "fold"
+
+    # -- Proportion-bound tests -----------------------------------------
+    # Same rationale as QuantGrid's: majority-only checks can't catch a
+    # ratio drifting within the same relative ordering (e.g. 80/20 -> 55/45
+    # is still "raise majority"). Whale's documented splits match
+    # QuantGrid's exactly (§5.6: recklessness lives in sizing, not in the
+    # continuance/action-frequency ratios).
+
+    def test_call_weighted_ratio_matches_30_70(self):
+        win_odds = win_odds_for_kelly_f(0.20, pot_size=200, cost_to_call=100)
+        n = 200
+        raises = sum(
+            self._decide(win_odds, 200, 100)[0] == "raise" for _ in range(n)
+        )
+        rate = raises / n
+        assert 0.15 <= rate <= 0.45  # documented: 30% raise
+
+    def test_raise_weighted_ratio_matches_80_20(self):
+        win_odds = win_odds_for_kelly_f(0.60, pot_size=200, cost_to_call=100)
+        n = 200
+        raises = sum(
+            self._decide(win_odds, 200, 100)[0] == "raise" for _ in range(n)
+        )
+        rate = raises / n
+        assert 0.65 <= rate <= 0.95  # documented: 80% raise
+
+    def test_free_check_ratio_matches_60_40(self):
+        n = 200
+        raises = sum(
+            self._decide(0.90, 200, 0)[0] == "raise" for _ in range(n)
+        )
+        rate = raises / n
+        assert 0.45 <= rate <= 0.75  # documented: 60% raise
 
 
 # =============================================================================
