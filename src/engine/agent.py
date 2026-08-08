@@ -17,10 +17,16 @@ class Agent:
     current decide() logic is intentionally position-blind as a clean baseline.
     """
 
-    def __init__(self, name, kelly_alpha, aggression=1.0, is_tilted=False, _tilt_hands_remaining=0):
+    def __init__(self, name, kelly_alpha, aggression=1.0, base_aggression=None,
+                 is_tilted=False, _tilt_hands_remaining=0):
         self.name = name
         self.kelly_alpha = kelly_alpha
         self.aggression = aggression
+        # Fixed baseline tilt resets against — never mutated by check_tilt()
+        # itself. Defaults to the current aggression so every existing
+        # call site (Fish/Grinder's implicit 1.0, Whale's explicit 1.2)
+        # keeps working unchanged.
+        self.base_aggression = base_aggression if base_aggression is not None else aggression
         self.is_tilted = is_tilted
         self._tilt_hands_remaining = _tilt_hands_remaining
 
@@ -32,25 +38,35 @@ class Agent:
 
     def check_tilt(self, hand_profit, bankroll):
         """
-        Tilt state machine stub (not wired into decide() yet).
-        Trigger: single-hand loss > 50% of bankroll.
-        Effect: is_tilted=True, aggression *= 1.5, lasts 10 hands.
+        Tilt state machine. NOT wired into any decide() -- see Blueprint
+        §5.2 point 5: this needs post-hand-resolution profit/loss, which
+        no orchestration loop currently computes (Phase IV, §8, not
+        started). Call this directly, once per agent, after a hand
+        resolves, once such a loop exists.
+
+        Trigger: single-hand loss > 50% of bankroll. Effect: is_tilted=True,
+        aggression = base_aggression * 1.5 (not *=), lasts 10 hands.
+        Cooldown: resets aggression to exactly base_aggression (not /=)
+        when _tilt_hands_remaining reaches 0. Repeated tilts before
+        cooldown ends re-extend the cooldown but do NOT compound
+        aggression further -- fixed bug, see §10.
         """
         if bankroll > 0 and (-hand_profit / bankroll) > 0.5:
             self.is_tilted = True
             self._tilt_hands_remaining = 10
-            self.aggression *= 1.5
+            self.aggression = self.base_aggression * 1.5
         elif self._tilt_hands_remaining > 0:
             self._tilt_hands_remaining -= 1
             if self._tilt_hands_remaining == 0:
                 self.is_tilted = False
-                self.aggression /= 1.5
+                self.aggression = self.base_aggression
 
     def to_dict(self):
         return {
             "name": self.name,
             "kelly_alpha": self.kelly_alpha,
             "aggression": self.aggression,
+            "base_aggression": self.base_aggression,
             "is_tilted": self.is_tilted,
             "_tilt_hands_remaining": self._tilt_hands_remaining,
         }
@@ -61,6 +77,7 @@ class Agent:
             name=d["name"],
             kelly_alpha=d["kelly_alpha"],
             aggression=d.get("aggression", 1.0),
+            base_aggression=d.get("base_aggression", d.get("aggression", 1.0)),
             is_tilted=d.get("is_tilted", False),
             _tilt_hands_remaining=d.get("_tilt_hands_remaining", 0)
         )
