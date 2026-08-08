@@ -150,12 +150,12 @@ def calculate_hands(self):
 
 The MLP (`PokerMLP`, `train_poker.py`) remains in the codebase but is no longer used for hand ranking. Possible future use: as an input to QuantGrid's real scoring (see §5.5, Option B) or retired entirely.
 
-### 4.5 Monte Carlo Win-Rate Comparator (partially fixed, one bug remains)
+### 4.5 Monte Carlo Win-Rate Comparator (fixed, verified — commit `3b4e339`, 2026-08-03)
 
 `calculate_win_odds()` in `simulation.py`:
 - Deck sampling (`np.random.choice` over remaining deck, building `sim_cards`) — **correct**.
-- Win/tie comparison — **fixed this session**: previously used scalar MLP-classified rank (`torch.argmax`), causing any same-category hands to count as ties regardless of actual kicker strength (e.g. Two Pair with different kickers wrongly scored as a tie). Now uses `get_hand_key()` tuple comparison per simulation.
-- **Feature matrix infill — still broken.** `feature_matrix = np.zeros((total_hands, 14))` is allocated but never filled with real card data before being passed downstream. This is dead code now that hand evaluation no longer depends on the MLP path, but the function's Monte Carlo loop still needs to construct real `Hand` objects from `sim_cards` per simulation to actually compute a win probability. **This is the highest-priority remaining bug** — until fixed, `calculate_win_odds()` does not return a trustworthy result.
+- Win/tie comparison — **fixed**: previously used scalar MLP-classified rank (`torch.argmax`), causing any same-category hands to count as ties regardless of actual kicker strength (e.g. Two Pair with different kickers wrongly scored as a tie). Now uses `get_hand_key()` tuple comparison per simulation.
+- **Feature matrix infill — fixed.** The dead `feature_matrix = np.zeros((total_hands, 14))` allocation (never filled, never read — a leftover from the retired MLP path) was removed entirely in commit `3b4e339`. The Monte Carlo loop already constructed real `Hand` objects from `sim_cards` per simulation and compared `get_hand_key()` tuples directly — the allocation was dead weight, not a functional gap. Verified against known equity benchmarks: AA vs random ≈85.75% (ref 85.2%), AKs (67.70%) > KQs (62.43%), forced-tie scenario exactly 50.00%. See §10 for full verification detail.
 
 ### 4.6 Post-Flop Multi-Factor Decay Engine (spec only, not implemented)
 
@@ -307,7 +307,7 @@ Distinct from Phase V (which is QuantGrid-only, cross-session, hand-type-keyed).
   * `Agent` base class scaffolded; tilt round-trip bug fixed.
   * `get_hand_key()` implemented — kicker-aware comparison replacing MLP classification for hand ranking.
   * `get_best_hand()` rewired to deterministic evaluation.
-  * `calculate_win_odds()` comparator fixed (still has feature-infill bug, see §4.5).
+  * `calculate_win_odds()` comparator fixed, including the feature-infill dead-code removal (commit `3b4e339`, see §4.5).
   * Standard Chen formula implemented and hand-verified (including correcting two wrong turns: a false reference value and an incorrectly-invented wheel exception).
   * Fish and Grinder fully implemented (`score_hand()` + `decide()`), verified.
 
@@ -347,10 +347,11 @@ Distinct from Phase V (which is QuantGrid-only, cross-session, hand-type-keyed).
 
 | Issue | Status | Priority |
 |---|---|---|
-| `calculate_win_odds()` feature_matrix all-zero infill | **Fixed** — verified 2026-08-03, commit `3b4e339` | Verified: AA 85.75% (ref 85.2%), AKs 67.70% > KQs 62.43%, forced-tie 50.00% exact, wins+ties+losses=simulations confirmed. Unblocks QuantGrid Option B. |
+| `calculate_win_odds()` feature_matrix all-zero infill | **Fixed** — verified 2026-08-03, commit `3b4e339`. Verified: AA 85.75% (ref 85.2%), AKs 67.70% > KQs 62.43%, forced-tie 50.00% exact, wins+ties+losses=simulations confirmed. Unblocks QuantGrid Option B. | — |
 | QuantGrid `decide()` has no `win_odds` source | **Fixed** — Option B implemented and verified 2026-08-07, commit `6c31c50`. See §5.5. | — |
 | No agent's raise sizing was bounded by bankroll — Fish/Grinder ignored bankroll entirely (sized off `pot_size`); QuantGrid was safe only by luck at `alpha=0.25`. Discovered while implementing Whale (`alpha=1.0` made the gap immediately visible). | **Fixed** — `clamp_to_bankroll()` added to `risk.py` and applied to Fish/Grinder/QuantGrid, commit `9b44ff4`; Whale built with the clamp from the start, commit `3242717`. Verified 2026-08-07: existing agents produce identical output in normal play, previously-overflowing edge cases now clamp correctly. | — |
 | `generate_dataset.py` module-level execution on import | Fixed (commit 6839ce3) | — |
+| `PokerEngine.__init__` crashes on fresh clone if model files (`data/poker_model.pth`, `data/poker_scaler.pkl`) are absent — both are gitignored, so this fails immediately for anyone cloning the repo without first training a model | Open — previously referenced only in this section's footer, with no table row; added here | Medium |
 | Tilt aggression compounds permanently across repeated tilt episodes (no reset to base) | Open — the bankroll clamp (above) bounds the *consequence* of unbounded aggression growth, but the underlying compounding logic itself is still unfixed | Medium |
 | `generate_boats()` indentation bug (pre-existing, causes duplicate row corruption in dataset generation) | Open, not yet addressed this session | Low (dataset-gen only, not runtime-critical) |
 | `record_action()` / `plot_session_results()` called in old `__main__` block but never defined | Open, likely dead code post-restructure — confirm still referenced anywhere before fixing | Low |
