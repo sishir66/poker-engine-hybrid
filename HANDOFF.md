@@ -7,9 +7,10 @@ Reference alongside `PokerEngine_Blueprint.md`. Blueprint has design spec and fu
 ## Repo state
 
 Branch: `main`.
-Last commit: `3ae4629` — Fix PokerEngine.__init__ crash on missing model files.
+Last commit: `77fac5f` — Fix Agent.from_dict() TypeError on Fish/Grinder/QuantGrid/Whale.
 
 ```
+77fac5f Fix Agent.from_dict() TypeError on Fish/Grinder/QuantGrid/Whale
 3ae4629 Fix PokerEngine.__init__ crash on missing model files
 67a212d Mark tilt-compounding bug fixed in Blueprint §10
 57087ce Fix tilt-aggression compounding bug via base_aggression field
@@ -40,7 +41,7 @@ c402e4a Implement Chen formula preflop scoring
 a7e565d Initial commit: Modular architecture layout
 ```
 
-**This closes the last item on the original three-item priority list from two sessions ago** — `calculate_win_odds()` fix, QuantGrid Option B, Whale, test suite, tilt-compounding fix, and now `PokerEngine.__init__`, all done.
+The original three-item priority list from two sessions ago — `calculate_win_odds()` fix, QuantGrid Option B, Whale, test suite, tilt-compounding fix, `PokerEngine.__init__` — closed out as of the previous commit. This session's commit (`77fac5f`) fixes the next-highest item that was already flagged (Medium-High) rather than newly discovered: `Agent.from_dict()`'s `TypeError` on all four subclasses.
 
 ---
 
@@ -50,7 +51,7 @@ a7e565d Initial commit: Modular architecture layout
 |---|---|---|
 | Chen preflop formula | `src/engine/preflop.py` | K=8, true-rank gap (Ace=14), no wheel exception. AA=20, AKs=12, AKo=10, 77=7, 72o=0. |
 | Kelly fraction | `src/engine/risk.py` | `f* = (b*p - q) / b`, clamped at 0. |
-| `Agent` base class | `src/engine/agent.py` | `check_tilt()` implemented, compounding bug fixed (`base_aggression` field, commit `57087ce`) — still not wired into any `decide()` (see below). `to_dict()`/`from_dict()` work on base `Agent`; broken on all four subclasses (see Known bugs). |
+| `Agent` base class | `src/engine/agent.py` | `check_tilt()` implemented, compounding bug fixed (`base_aggression` field, commit `57087ce`) — still not wired into any `decide()` (see below). `to_dict()`/`from_dict()` now work on all four subclasses too (`_restore_state()` helper, commit `77fac5f`) — `QuantGrid.from_dict(d, engine)`/`Whale.from_dict(d, engine)` require an explicit `engine` arg. |
 | `Fish` | `src/engine/agent.py` | Legacy heuristic with intentional biases preserved. See Blueprint §4.3. |
 | `Grinder` | `src/engine/agent.py` | Chen formula, tight-aggressive thresholds. |
 | `QuantGrid` | `src/engine/agent.py` | Option B implemented (commit `6c31c50`, 2026-08-07). Computes `win_odds` internally via `calculate_win_odds()`; decisions gated on `kelly_f` magnitude, not Chen score. See Blueprint §5.5. |
@@ -59,7 +60,7 @@ a7e565d Initial commit: Modular architecture layout
 | Hand evaluator (`get_hand_key()`) | `src/engine/simulation.py` | Tuple-based, kicker-aware, deterministic. MLP retired from the eval path. |
 | `PokerEngine.__init__` no longer crashes on missing model files | `src/engine/simulation.py` | Fixed (commit `3ae4629`, 2026-08-09). Load wrapped in try/except (FileNotFoundError, OSError); `self.model`/`self.scaler` set to `None` on failure. Confirmed unused elsewhere in the repo. Fresh-clone crash simulated and verified fixed; win_odds benchmarks re-verified with no regression. |
 | Dataset generation import fix | `src/models/generate_dataset.py` | `if __name__ == "__main__":` guard added (commit 6839ce3). |
-| Test suite | `tests/test_engine.py` | 106 tests, all passing (commit `3ae4629` added the 106th — `TestPokerEngineConstruction`). Covers Kelly fraction, Chen formula, Fish heuristic, hand evaluator, real `calculate_win_odds()` benchmarks, QuantGrid/Whale decision-tree thresholds (including proportion-bound ratio checks, commit `f716183`), bankroll clamp, agent serialization, and now real `PokerEngine()` construction without model files. `check_tilt()` trigger logic still explicitly excluded — see below. |
+| Test suite | `tests/test_engine.py` | 111 tests, all passing (commit `3ae4629` added `TestPokerEngineConstruction`; commit `77fac5f` added 5 more — per-subclass `from_dict()` round-trips + a reconstructed-`decide()` check). Covers Kelly fraction, Chen formula, Fish heuristic, hand evaluator, real `calculate_win_odds()` benchmarks, QuantGrid/Whale decision-tree thresholds (including proportion-bound ratio checks, commit `f716183`), bankroll clamp, agent serialization (base + all four subclasses), and real `PokerEngine()` construction without model files. `check_tilt()` trigger logic still explicitly excluded — see below. |
 
 ---
 
@@ -97,14 +98,17 @@ a7e565d Initial commit: Modular architecture layout
 
 Constructor no longer crashes when `data/poker_model.pth`/`data/poker_scaler.pkl` are absent (both gitignored). Neither attribute is read anywhere else in the codebase.
 
-### 7. Next — no committed roadmap beyond this point
+### ~~7. `Agent.from_dict()` TypeError on all four subclasses~~ — **DONE (2026-08-09, commit `77fac5f`)**
 
-All items from the original two-sessions-ago priority list are now closed. Open, undecided next steps:
-- `Agent.from_dict()` `TypeError` on all four subclasses (Medium-High priority, see Known bugs) — a real bug, not yet fixed.
+Added `Agent._restore_state(d)`; each subclass's new `from_dict()` constructs itself normally, then calls it. `QuantGrid.from_dict(d, engine)`/`Whale.from_dict(d, engine)` require an explicit `engine` arg — same signature divergence already accepted for `decide()`.
+
+### 8. Next — no committed roadmap beyond this point
+
+All items from the original two-sessions-ago priority list, plus the from_dict bug flagged alongside it, are now closed. Open, undecided next steps:
 - Phase IV hand-resolution orchestration loop, which would unblock `check_tilt()` wiring.
 - `generate_boats()` indentation bug (Low priority, dataset-gen only).
 
-No priority order has been set among these — next session should confirm direction before starting any of them.
+No priority order has been set among these — next session should confirm direction before starting either of them.
 
 ---
 
@@ -118,7 +122,7 @@ No priority order has been set among these — next session should confirm direc
 - **Whale's recklessness is sizing-only, not continuance.** Fold floor (`kelly_f < 0.03`) is only slightly looser than QuantGrid's (`0.05`); don't loosen continuance logic further to express "maniac" — that belongs in `aggression`/random-band sizing.
 - **`clamp_to_bankroll()` (`risk.py`) must be applied OUTERMOST** — after any `max(min_raise, ...)` flooring in a sizing expression, never before.
 - **`check_tilt()`'s compounding bug is fixed, but it's still not wired into any `decide()`.** Don't add tilt-adjusted behavior tests against `decide()` until the Phase IV orchestration loop exists and wiring happens.
-- **`Agent.from_dict()` is broken on every subclass.** `Fish`/`Grinder`/`QuantGrid`/`Whale` all override `__init__()` with a signature that rejects the kwargs the base classmethod passes. Confirmed empirically on all four. Don't rely on subclass serialization round-trips until this is fixed.
+- **`QuantGrid.from_dict()`/`Whale.from_dict()` require an explicit `engine` argument** (`from_dict(d, engine)`) — diverges from the base `Agent.from_dict(d)` signature on purpose, same as their `decide()` divergence. `engine` is a live runtime dependency, not serialized state; it can't be recovered from the dict alone.
 - **`seaborn` is imported in `simulation.py` but not installed anywhere in the venv, and not listed in any requirements file (none exists).** `tests/test_engine.py` works around this with a test-only `sys.modules` shim — source code is untouched.
 - **`PokerEngine.__init__` no longer crashes without model files, but the model/scaler are genuinely unused elsewhere.** If the MLP path is ever reactivated (Blueprint §5.5 mentions it as a possible future QuantGrid input, never built), that code must check `if self.model is not None` before use.
 - **Verification bar is always: real printed output, not a summary.** Every prior implementation was confirmed with actual script output pasted back. Same standard applies going forward.
@@ -137,7 +141,7 @@ No priority order has been set among these — next session should confirm direc
 | Blueprint §4.5/§8 said the feature-matrix bug was still open, contradicting §10's "Fixed" row | Documentation accuracy | **Fixed 2026-08-07** (commit `eaec61e`) |
 | Tilt aggression compounded permanently across repeated tilt episodes | Tilt correctness | **Fixed 2026-08-08** (commit `57087ce`) |
 | `PokerEngine.__init__` crashed on fresh clone if model files absent | Fresh setup, running engine code without the constructor-bypass trick | **Fixed 2026-08-09** (commit `3ae4629`) |
-| `Agent.from_dict()` raises `TypeError` on every subclass — `Fish`/`Grinder`/`QuantGrid`/`Whale` override `__init__()` with a signature that rejects the base classmethod's kwargs | Any future save/load or checkpoint functionality (Phase IV, §6) | **Medium-High** — open |
+| `Agent.from_dict()` raised `TypeError` on every subclass — `Fish`/`Grinder`/`QuantGrid`/`Whale` override `__init__()` with a signature that rejects the base classmethod's kwargs | Any future save/load or checkpoint functionality (Phase IV, §6) | **Fixed 2026-08-09** (commit `77fac5f`) |
 | `check_tilt()` trigger logic has no test coverage (design never exercised with confirmed printed output before wiring) | Tilt wiring test coverage | Open — do not test until wired + verified |
 | `check_tilt()` not wired into any `decide()` | Tilt behavior actually affecting play | Open — blocked on Phase IV hand-resolution orchestration loop, which doesn't exist yet |
 | `generate_boats()` indentation bug in dataset generation | Dataset quality | Low — runtime not affected |
