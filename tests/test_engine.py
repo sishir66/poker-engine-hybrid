@@ -304,6 +304,24 @@ class TestHandEvaluator:
 
 
 # =============================================================================
+# Group 3.5 — PokerEngine construction (real constructor, no bypass)
+# Source: Blueprint §10 -- PokerEngine.__init__ crash on missing model files
+# =============================================================================
+
+class TestPokerEngineConstruction:
+    def test_construction_does_not_crash_without_model_files(self):
+        # Explicit nonexistent paths -- portable, never touches the real
+        # trained model on disk. Exercises the exact FileNotFoundError path
+        # torch.load()/joblib.load() raise on a missing file.
+        engine = PokerEngine(
+            model_path='data/does_not_exist.pth',
+            scaler_path='data/does_not_exist.pkl',
+        )
+        assert engine.model is None
+        assert engine.scaler is None
+
+
+# =============================================================================
 # Group 4 — calculate_win_odds() Monte Carlo benchmarks (real engine)
 # Source: Blueprint §10 row 1 / commit 3b4e339
 # =============================================================================

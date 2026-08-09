@@ -17,10 +17,19 @@ from src.engine.risk import calculate_kelly_fraction
 class PokerEngine:
     def __init__(self, model_path='data/poker_model.pth', scaler_path='data/poker_scaler.pkl'):
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.model = PokerMLP().to(self.device)
-        self.model.load_state_dict(torch.load(model_path, map_location=self.device))
-        self.model.eval()
-        self.scaler = joblib.load(scaler_path)
+        self.model = None
+        self.scaler = None
+        try:
+            self.model = PokerMLP().to(self.device)
+            self.model.load_state_dict(torch.load(model_path, map_location=self.device))
+            self.model.eval()
+            self.scaler = joblib.load(scaler_path)
+        except (FileNotFoundError, OSError) as e:
+            print(f"Warning: could not load model/scaler ({e}). "
+                  f"self.model/self.scaler are None -- unused by get_best_hand() "
+                  f"or calculate_win_odds(), which don't depend on the MLP path.")
+            self.model = None
+            self.scaler = None
 
         self.session_history = []
 
