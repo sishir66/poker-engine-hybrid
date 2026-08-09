@@ -71,16 +71,24 @@ class Agent:
             "_tilt_hands_remaining": self._tilt_hands_remaining,
         }
 
+    def _restore_state(self, d):
+        """
+        Apply serialized state onto an already-constructed instance.
+        Exists because subclass __init__()s can't accept these as kwargs
+        (Fish/Grinder take none; QuantGrid/Whale take only `engine`), so
+        each from_dict() constructs first and restores second.
+        """
+        self.name = d["name"]
+        self.kelly_alpha = d["kelly_alpha"]
+        self.aggression = d.get("aggression", 1.0)
+        self.base_aggression = d.get("base_aggression", d.get("aggression", 1.0))
+        self.is_tilted = d.get("is_tilted", False)
+        self._tilt_hands_remaining = d.get("_tilt_hands_remaining", 0)
+        return self
+
     @classmethod
     def from_dict(cls, d):
-        return cls(
-            name=d["name"],
-            kelly_alpha=d["kelly_alpha"],
-            aggression=d.get("aggression", 1.0),
-            base_aggression=d.get("base_aggression", d.get("aggression", 1.0)),
-            is_tilted=d.get("is_tilted", False),
-            _tilt_hands_remaining=d.get("_tilt_hands_remaining", 0)
-        )
+        return cls(name=d["name"], kelly_alpha=d["kelly_alpha"])._restore_state(d)
 
 
 class Fish(Agent):
@@ -88,6 +96,10 @@ class Fish(Agent):
 
     def __init__(self):
         super().__init__(name="Fish", kelly_alpha=0.75)
+
+    @classmethod
+    def from_dict(cls, d):
+        return cls()._restore_state(d)
 
     def score_hand(self, hole_cards, community_cards):
         """
@@ -183,6 +195,10 @@ class Grinder(Agent):
     def __init__(self):
         super().__init__(name="Grinder", kelly_alpha=0.25)
 
+    @classmethod
+    def from_dict(cls, d):
+        return cls()._restore_state(d)
+
     def score_hand(self, hole_cards, community_cards):
         """Standard Chen formula. community_cards unused — preflop scoring only."""
         score = chen_score(hole_cards[0], hole_cards[1])
@@ -246,6 +262,17 @@ class QuantGrid(Agent):
     def __init__(self, engine):
         super().__init__(name="QuantGrid", kelly_alpha=0.25)
         self._engine = engine
+
+    @classmethod
+    def from_dict(cls, d, engine):
+        """
+        Signature diverges from Agent.from_dict(d) — requires an `engine`
+        argument, same divergence already accepted for decide() (see
+        Blueprint §5.5). `engine` is a live runtime dependency, not
+        serialized state, so it can't be recovered from `d` alone;
+        callers must supply a real PokerEngine.
+        """
+        return cls(engine)._restore_state(d)
 
     def score_hand(self, hole_cards, community_cards):
         """
@@ -341,6 +368,17 @@ class Whale(Agent):
     def __init__(self, engine):
         super().__init__(name="Whale", kelly_alpha=1.0, aggression=1.2)
         self._engine = engine
+
+    @classmethod
+    def from_dict(cls, d, engine):
+        """
+        Signature diverges from Agent.from_dict(d) — requires an `engine`
+        argument, same divergence already accepted for decide() (see
+        Blueprint §5.6). `engine` is a live runtime dependency, not
+        serialized state, so it can't be recovered from `d` alone;
+        callers must supply a real PokerEngine.
+        """
+        return cls(engine)._restore_state(d)
 
     def score_hand(self, hole_cards, community_cards):
         """

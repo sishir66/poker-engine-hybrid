@@ -647,13 +647,8 @@ class TestRegressionUnchangedSizing:
 
 class TestAgentSerialization:
     def test_tilt_hands_remaining_round_trips_through_to_dict_from_dict(self):
-        # Tested against the base Agent class, not a subclass: Fish/
-        # Grinder/Whale override __init__ to take no constructor kwargs
-        # (they hardcode name/kelly_alpha internally), so Fish.from_dict()
-        # would raise TypeError -- a separate, undocumented subclass/
-        # from_dict signature mismatch, flagged in the plan, not fixed
-        # here. Agent's own __init__ does accept the kwargs from_dict()
-        # passes, matching what the documented Phase-0 fix actually covers.
+        # Base Agent's __init__ accepts from_dict()'s kwargs directly,
+        # matching what the documented Phase-0 fix actually covers.
         agent = Agent(name="TestAgent", kelly_alpha=0.5)
         agent.is_tilted = True
         agent._tilt_hands_remaining = 7
@@ -662,3 +657,65 @@ class TestAgentSerialization:
         assert restored._tilt_hands_remaining == 7
         assert restored.is_tilted is True
         assert restored.aggression == 1.5
+
+    # -------------------------------------------------------------------
+    # Subclass from_dict() round-trips (Blueprint §10 -- previously
+    # raised TypeError on all four subclasses; fixed via Agent._restore_state).
+    # Fish/Grinder's __init__ takes no kwargs; QuantGrid/Whale's takes only
+    # `engine`. Each subclass now constructs itself normally, then applies
+    # saved state via _restore_state() rather than passing it through the
+    # constructor.
+    # -------------------------------------------------------------------
+
+    def _assert_round_trip(self, original, restored):
+        assert restored.name == original.name
+        assert restored.kelly_alpha == original.kelly_alpha
+        assert restored.aggression == original.aggression
+        assert restored.base_aggression == original.base_aggression
+        assert restored.is_tilted == original.is_tilted
+        assert restored._tilt_hands_remaining == original._tilt_hands_remaining
+
+    def test_fish_from_dict_round_trip(self):
+        fish = Fish()
+        fish.check_tilt(hand_profit=-600, bankroll=1000)
+        restored = Fish.from_dict(fish.to_dict())
+        self._assert_round_trip(fish, restored)
+
+    def test_grinder_from_dict_round_trip(self):
+        grinder = Grinder()
+        grinder.check_tilt(hand_profit=-600, bankroll=1000)
+        restored = Grinder.from_dict(grinder.to_dict())
+        self._assert_round_trip(grinder, restored)
+
+    def test_quantgrid_from_dict_round_trip(self):
+        engine = FakeEngine(0.85)
+        qg = QuantGrid(engine)
+        qg.check_tilt(hand_profit=-600, bankroll=1000)
+        restored = QuantGrid.from_dict(qg.to_dict(), engine)
+        self._assert_round_trip(qg, restored)
+
+    def test_whale_from_dict_round_trip(self):
+        # Whale is the sharpest case: base_aggression=1.2 (not 1.0), so a
+        # fix that collapsed base_aggression/aggression together would be
+        # caught here (tilted aggression = 1.2 * 1.5 = 1.8, distinct from
+        # both 1.2 and a naive 1.0 * 1.5 = 1.5).
+        engine = FakeEngine(0.85)
+        whale = Whale(engine)
+        whale.check_tilt(hand_profit=-600, bankroll=1000)
+        assert whale.base_aggression == 1.2
+        assert whale.aggression == pytest.approx(1.8)
+        restored = Whale.from_dict(whale.to_dict(), engine)
+        self._assert_round_trip(whale, restored)
+
+    def test_reconstructed_quantgrid_and_whale_can_decide(self):
+        # Round-tripping isn't just field equality -- the reconstructed
+        # instance's engine reference must be live and usable, not just
+        # present as an attribute.
+        engine = FakeEngine(0.85)
+        for cls in (QuantGrid, Whale):
+            original = cls(engine)
+            restored = cls.from_dict(original.to_dict(), engine)
+            restored.score_hand([Card(14, 0), Card(14, 1)], [])
+            action, size = restored.decide(200, 100, 10, 1000)
+            assert action in ("fold", "call", "raise")
+            assert size >= 0
