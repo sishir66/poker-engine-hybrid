@@ -193,15 +193,18 @@ Extracted as a standalone function `calculate_kelly_fraction()` in `src/engine/r
 `src/engine/agent.py`:
 ```python
 class Agent:
-    def __init__(self, name, kelly_alpha, aggression=1.0, is_tilted=False, _tilt_hands_remaining=0):
+    def __init__(self, name, kelly_alpha, aggression=1.0, base_aggression=None, is_tilted=False, _tilt_hands_remaining=0):
         ...
     def score_hand(self, hole_cards, community_cards): raise NotImplementedError
     def decide(self, win_odds, pot_size, cost_to_call, min_raise, bankroll): raise NotImplementedError
     def check_tilt(self, hand_profit, bankroll): ...  # see 5.2
     def to_dict(self): ...
+    def _restore_state(self, d): ...  # applies saved fields onto an already-built instance
     @classmethod
-    def from_dict(cls, d): ...
+    def from_dict(cls, d): return cls(name=d["name"], kelly_alpha=d["kelly_alpha"])._restore_state(d)
 ```
+
+Each subclass overrides `from_dict()` to construct itself the way its own `__init__` requires, then calls the inherited `_restore_state(d)`: `Fish`/`Grinder` via `cls()._restore_state(d)` (no constructor kwargs); `QuantGrid`/`Whale` via `cls(engine)._restore_state(d)` — `from_dict(d, engine)` requires an explicit `engine` argument, diverging from the base class signature the same way `decide()` already does (§5.5/§5.6). See §10 for the bug this fixes.
 
 **Fixed bug (Phase 0):** `from_dict()` originally always reset `_tilt_hands_remaining` to 0 regardless of the stored value, breaking serialization round-trips silently (no crash — just data loss). Fixed to correctly restore the passed value.
 
@@ -350,7 +353,7 @@ Distinct from Phase V (which is QuantGrid-only, cross-session, hand-type-keyed).
 | `calculate_win_odds()` feature_matrix all-zero infill | **Fixed** — verified 2026-08-03, commit `3b4e339`. Verified: AA 85.75% (ref 85.2%), AKs 67.70% > KQs 62.43%, forced-tie 50.00% exact, wins+ties+losses=simulations confirmed. Unblocks QuantGrid Option B. | — |
 | QuantGrid `decide()` has no `win_odds` source | **Fixed** — Option B implemented and verified 2026-08-07, commit `6c31c50`. See §5.5. | — |
 | No agent's raise sizing was bounded by bankroll — Fish/Grinder ignored bankroll entirely (sized off `pot_size`); QuantGrid was safe only by luck at `alpha=0.25`. Discovered while implementing Whale (`alpha=1.0` made the gap immediately visible). | **Fixed** — `clamp_to_bankroll()` added to `risk.py` and applied to Fish/Grinder/QuantGrid, commit `9b44ff4`; Whale built with the clamp from the start, commit `3242717`. Verified 2026-08-07: existing agents produce identical output in normal play, previously-overflowing edge cases now clamp correctly. | — |
-| `Agent.from_dict()` raises `TypeError` on every subclass — `Fish`/`Grinder`/`QuantGrid`/`Whale` all override `__init__()` with a signature that doesn't accept the kwargs (`name`, `kelly_alpha`, `aggression`, `is_tilted`, `_tilt_hands_remaining`) the base classmethod passes to `cls(...)`. Confirmed empirically on all four (identical error: `unexpected keyword argument 'name'`) while writing `tests/test_engine.py` — worked around there by testing against base `Agent` directly rather than fixed. | Open — will actively break any future save/load or checkpoint functionality (relevant to Phase IV environments, §6) | **Medium-High** |
+| `Agent.from_dict()` raised `TypeError` on every subclass — `Fish`/`Grinder`/`QuantGrid`/`Whale` all override `__init__()` with a signature that doesn't accept the kwargs the base classmethod passed to `cls(...)`. | **Fixed** — verified 2026-08-09, commit `77fac5f`. Added `Agent._restore_state(d)`, which applies saved fields onto an already-constructed instance; each subclass's new `from_dict()` constructs itself normally, then calls it. `QuantGrid.from_dict(d, engine)`/`Whale.from_dict(d, engine)` require an explicit `engine` arg (live runtime dependency, not serialized state) — same signature divergence from the base class already accepted for `decide()`. Verified: all four subclasses round-trip exactly (including a tilted Whale, `base_aggression=1.2`/`aggression=1.8`), and a reconstructed QuantGrid/Whale can call `decide()` successfully. No production caller exists yet (confirmed via repo-wide search before fixing) — this closes a latent bug ahead of any Phase IV save/load work. | — |
 | `generate_dataset.py` module-level execution on import | Fixed (commit 6839ce3) | — |
 | `PokerEngine.__init__` crashes on fresh clone if model files (`data/poker_model.pth`, `data/poker_scaler.pkl`) are absent — both are gitignored, so this fails immediately for anyone cloning the repo without first training a model | **Fixed** — verified 2026-08-09, commit `3ae4629`. Load wrapped in try/except (FileNotFoundError, OSError); `self.model`/`self.scaler` set to `None` on failure and unused elsewhere (confirmed via full-repo search — `get_best_hand()`/`calculate_win_odds()` don't depend on the MLP path). Fresh-clone crash simulated (real files temporarily hidden, restored immediately after) and win_odds benchmarks re-verified with no regression. | — |
 | Tilt aggression compounds permanently across repeated tilt episodes (no reset to base) | **Fixed** — `base_aggression` field added, verified 2026-08-08, commit `57087ce`. See §5.2. | — |
