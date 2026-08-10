@@ -12,3 +12,8 @@ class Card:
 
     def __eq__(self, other):
         return self.rank == other.rank and self.suit == other.suit
+
+    def __hash__(self):
+        # Safe only because nothing in this codebase mutates rank/suit
+        # after construction -- every Card is freshly built, never edited.
+        return hash((self.rank, self.suit))
