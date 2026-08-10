@@ -32,7 +32,7 @@ from src.engine.preflop import chen_score
 from src.engine.risk import calculate_kelly_fraction, clamp_to_bankroll
 from src.engine.hand import Hand
 from src.engine.agent import Agent, Fish, Grinder, QuantGrid, Whale
-from src.engine.simulation import PokerEngine
+from src.engine.simulation import PokerEngine, _showdown_credit
 from src.utils.card import Card
 
 
@@ -64,6 +64,8 @@ def make_real_engine():
     engine = PokerEngine.__new__(PokerEngine)
     engine.cache_odds = None
     engine.cache_cards = None
+    engine.cache_num_opponents = None
+    engine.cache_simulations = None
     return engine
 
 
@@ -304,6 +306,26 @@ class TestHandEvaluator:
 
 
 # =============================================================================
+# Group 3.6 — Card hashability
+# Source: Phase IV Stage 0, finding #3 -- Card had __eq__ but no __hash__
+# =============================================================================
+
+class TestCardHashing:
+    def test_card_is_hashable(self):
+        # Previously raised TypeError: unhashable type 'Card' -- blocks any
+        # set/dict-key use of Card, which Phase IV's dealer needs for
+        # dealt-card tracking.
+        s = {Card(14, 0), Card(13, 1)}
+        assert len(s) == 2
+
+    def test_equal_cards_hash_equal(self):
+        # Required invariant: objects that compare equal must hash equal.
+        a, b = Card(14, 0), Card(14, 0)
+        assert a == b
+        assert hash(a) == hash(b)
+
+
+# =============================================================================
 # Group 3.5 — PokerEngine construction (real constructor, no bypass)
 # Source: Blueprint §10 -- PokerEngine.__init__ crash on missing model files
 # =============================================================================
@@ -362,6 +384,87 @@ class TestWinOddsBenchmarks:
             simulations=500,
         )
         assert result == 0.5
+
+    def test_three_way_forced_chop_is_exact_third(self):
+        # Same Broadway-board construction as test_forced_tie_exact_half,
+        # extended to num_opponents=2: hero and both opponents all play
+        # the board every simulation, zero variance -> exact 1/3, not the
+        # heads-up-only 1/2 the old (wins + ties/2)/simulations formula
+        # would have given (Phase IV Stage 0, finding #2).
+        engine = make_real_engine()
+        result = engine.calculate_win_odds(
+            [Card(2, 0), Card(3, 0)],
+            [Card(14, 0), Card(13, 1), Card(12, 2), Card(11, 3), Card(10, 0)],
+            num_opponents=2,
+            simulations=500,
+        )
+        assert result == pytest.approx(1 / 3)
+
+
+# =============================================================================
+# Group 4.5 — Cache-key correctness and per-simulation showdown credit
+# Source: Phase IV Stage 0, findings #1 (stale cache) and #2 (heads-up-only tie split)
+# =============================================================================
+
+class TestCacheKeyCorrectness:
+    def test_cache_distinguishes_num_opponents(self):
+        # Previously: AA vs 1 opp and AA vs 5 opp returned the identical
+        # stale value from one engine, because num_opponents wasn't part
+        # of the cache key. Gap (0.86 vs 0.48-ish) is nowhere near
+        # Monte Carlo noise at these simulation counts.
+        engine = make_real_engine()
+        vs_1 = engine.calculate_win_odds(
+            [Card(14, 0), Card(14, 1)], [], num_opponents=1, simulations=1500
+        )
+        vs_5 = engine.calculate_win_odds(
+            [Card(14, 0), Card(14, 1)], [], num_opponents=5, simulations=1500
+        )
+        assert vs_1 > vs_5 + 0.2
+
+    def test_cache_key_tracks_simulations(self):
+        # Two different sim counts don't reliably produce visibly
+        # different odds values (both are noisy estimates of the same
+        # true probability), so assert on the cache mechanism directly
+        # rather than on statistical output.
+        engine = make_real_engine()
+        engine.calculate_win_odds(
+            [Card(14, 0), Card(14, 1)], [], num_opponents=1, simulations=500
+        )
+        assert engine.cache_simulations == 500
+        engine.calculate_win_odds(
+            [Card(14, 0), Card(14, 1)], [], num_opponents=1, simulations=1500
+        )
+        assert engine.cache_simulations == 1500
+
+
+class TestShowdownCredit:
+    """Direct unit tests for simulation.py::_showdown_credit() -- pure
+    tuples, no RNG, no Card objects. Covers the case a blanket
+    1/(num_opponents+1) divisor gets wrong: a partial tie."""
+
+    def test_heads_up_win(self):
+        assert _showdown_credit((5,), [(3,)]) == 1.0
+
+    def test_heads_up_loss(self):
+        assert _showdown_credit((3,), [(5,)]) == 0.0
+
+    def test_heads_up_tie(self):
+        assert _showdown_credit((5,), [(5,)]) == pytest.approx(0.5)
+
+    def test_three_way_full_chop(self):
+        assert _showdown_credit((5,), [(5,), (5,)]) == pytest.approx(1 / 3)
+
+    def test_three_way_partial_tie(self):
+        # Hero ties one opponent while a second opponent holds a
+        # strictly worse hand -- correct split is 1/2, NOT 1/3. A
+        # blanket 1/(num_opponents+1) divisor would wrongly give 1/3.
+        assert _showdown_credit((5,), [(5,), (2,)]) == pytest.approx(0.5)
+
+    def test_three_way_hero_loses_outright(self):
+        assert _showdown_credit((2,), [(5,), (5,)]) == 0.0
+
+    def test_four_way_full_chop(self):
+        assert _showdown_credit((5,), [(5,), (5,), (5,)]) == pytest.approx(1 / 4)
 
 
 # =============================================================================
@@ -556,7 +659,7 @@ class TestBankrollClamp:
         fish._cached_score = 25  # >= 20, forces the raise branch
         import random
         random.seed(1)
-        action, amount = fish.decide(0, 500, 100, 10, 100)
+        action, amount = fish.decide(500, 100, 10, 100)
         assert amount <= 100
 
     def test_grinder_sizing_respects_bankroll(self):
@@ -564,7 +667,7 @@ class TestBankrollClamp:
         grinder._cached_score = 12  # >= 10, forces the raise branch
         import random
         random.seed(1)
-        action, amount = grinder.decide(0, 500, 100, 10, 100)
+        action, amount = grinder.decide(500, 100, 10, 100)
         assert amount <= 100
 
     def test_quantgrid_sizing_respects_bankroll_at_min_raise_overflow(self):
@@ -603,7 +706,7 @@ class TestRegressionUnchangedSizing:
         fish = Fish()
         fish._cached_score = 25
         random.seed(1)
-        action, amount = fish.decide(0, 200, 100, 10, 1000)
+        action, amount = fish.decide(200, 100, 10, 1000)
         assert action == "raise"
         assert amount == 150
 
@@ -612,7 +715,7 @@ class TestRegressionUnchangedSizing:
         grinder = Grinder()
         grinder._cached_score = 12
         random.seed(1)
-        action, amount = grinder.decide(0, 200, 100, 10, 1000)
+        action, amount = grinder.decide(200, 100, 10, 1000)
         assert action == "raise"
         assert amount == 200
 

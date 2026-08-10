@@ -14,6 +14,30 @@ from src.models.generate_dataset import convert_card_to_data
 from src.engine.risk import calculate_kelly_fraction
 
 
+def _showdown_credit(our_key, opp_keys):
+    """
+    Equity credit for one Monte Carlo simulation -- a fraction in [0, 1]
+    used only to accumulate calculate_win_odds()'s probability estimate.
+    This is NOT chip-split logic: a real showdown pot-award needs its own
+    function, using the odd-chip-to-first-clockwise rule (Phase IV design
+    doc), not this one. A probability fraction (e.g. 1/3) and an integer
+    chip split (e.g. 33/33/34) are different problems with different
+    correctness rules.
+
+    1.0 if our_key strictly wins, 0.0 if we're beaten by any opponent,
+    else 1/k where k is the number of players (including us) who share
+    the actual best key -- not num_opponents+1, which is only correct
+    when every opponent ties. A partial tie (we tie one opponent while
+    another opponent holds a worse hand) still splits two ways, not three.
+    """
+    all_keys = [our_key] + list(opp_keys)
+    best = max(all_keys)
+    if our_key != best:
+        return 0.0
+    winners = sum(1 for k in all_keys if k == best)
+    return 1.0 / winners
+
+
 class PokerEngine:
     def __init__(self, model_path='data/poker_model.pth', scaler_path='data/poker_scaler.pkl'):
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -36,6 +60,8 @@ class PokerEngine:
         # --- CACHE / STATE MANAGEMENT ---
         self.cache_odds = None
         self.cache_cards = None
+        self.cache_num_opponents = None
+        self.cache_simulations = None
         self.current_best_hand = None
 
     def get_best_hand(self, hole_cards, community_cards):
@@ -66,7 +92,10 @@ class PokerEngine:
     def calculate_win_odds(self, hole_cards, community_cards, num_opponents=1, simulations=1000):
         """Vectorized Monte Carlo Simulation."""
         current_state = hole_cards + community_cards
-        if self.cache_cards == current_state and self.cache_odds is not None:
+        if (self.cache_cards == current_state
+                and self.cache_num_opponents == num_opponents
+                and self.cache_simulations == simulations
+                and self.cache_odds is not None):
             return self.cache_odds
 
         full_deck = Deck().cards
@@ -80,8 +109,7 @@ class PokerEngine:
         indices = np.array([np.random.choice(len(deck_arr), total_needed, replace=False) for _ in range(simulations)])
         sim_cards = deck_arr[indices]
 
-        wins = 0
-        ties = 0
+        total_credit = 0.0
         for sim_idx in range(simulations):
             drawn = sim_cards[sim_idx]  # shape (total_needed, 2): [rank, suit]
             board_drawn = [
@@ -111,16 +139,14 @@ class PokerEngine:
                 )
                 opp_keys.append(opp_key)
 
-            best_opp = max(opp_keys)
-            if our_key > best_opp:
-                wins += 1
-            elif our_key == best_opp:
-                ties += 1
+            total_credit += _showdown_credit(our_key, opp_keys)
 
-        final_odds = (wins + ties / 2) / simulations
+        final_odds = total_credit / simulations
 
         self.cache_odds = final_odds
         self.cache_cards = current_state
+        self.cache_num_opponents = num_opponents
+        self.cache_simulations = simulations
         return final_odds
 
     def make_decision(self, win_odds, pot_size, cost_to_call, min_raise, bankroll, is_dealer=False, is_button=False):

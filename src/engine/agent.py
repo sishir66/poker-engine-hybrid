@@ -33,7 +33,7 @@ class Agent:
     def score_hand(self, hole_cards, community_cards):
         raise NotImplementedError(f"{self.name}.score_hand() not implemented")
 
-    def decide(self, win_odds, pot_size, cost_to_call, min_raise, bankroll):
+    def decide(self, pot_size, cost_to_call, min_raise, bankroll):
         raise NotImplementedError(f"{self.name}.decide() not implemented")
 
     def check_tilt(self, hand_profit, bankroll):
@@ -147,7 +147,7 @@ class Fish(Agent):
         self._cached_score = score
         return score
 
-    def decide(self, win_odds, pot_size, cost_to_call, min_raise, bankroll):
+    def decide(self, pot_size, cost_to_call, min_raise, bankroll):
         """
         Loose-passive: calls too much, folds too rarely, raises infrequently.
         Uses self._cached_score (set by score_hand()) rather than win_odds —
@@ -205,7 +205,7 @@ class Grinder(Agent):
         self._cached_score = score
         return score
 
-    def decide(self, win_odds, pot_size, cost_to_call, min_raise, bankroll):
+    def decide(self, pot_size, cost_to_call, min_raise, bankroll):
         """
         Tight-aggressive: folds marginal hands readily, raises rather than calls
         when it does play. Uses _cached_score set by score_hand() — same pattern
