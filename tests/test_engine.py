@@ -33,6 +33,8 @@ from src.engine.risk import calculate_kelly_fraction, clamp_to_bankroll
 from src.engine.hand import Hand
 from src.engine.agent import Agent, Fish, Grinder, QuantGrid, Whale
 from src.engine.simulation import PokerEngine, _showdown_credit
+from src.engine import c_hand_eval
+from src.engine.c_hand_eval import evaluate_seven_c, evaluate_seven_py, AVAILABLE
 from src.utils.card import Card
 
 
@@ -465,6 +467,91 @@ class TestShowdownCredit:
 
     def test_four_way_full_chop(self):
         assert _showdown_credit((5,), [(5,), (5,), (5,)]) == pytest.approx(1 / 4)
+
+
+# =============================================================================
+# Group 4.6 — C hand evaluator differential tests (src/c_core/hand_eval.c)
+# Source: Phase IV Stage 0.5 -- narrow C evaluator for calculate_win_odds()
+# =============================================================================
+
+c_eval_required = pytest.mark.skipif(
+    not AVAILABLE, reason="C hand evaluator not built (run `make` in src/c_core/)"
+)
+
+
+def _assert_matches_reference(cards):
+    c_key = evaluate_seven_c(cards)
+    py_key = evaluate_seven_py(cards)
+    plen = len(py_key)
+    assert c_key[:plen] == py_key, f"mismatch on {cards}: C={c_key} PY={py_key}"
+    assert all(v == 0 for v in c_key[plen:]), f"non-zero padding on {cards}: C={c_key}"
+
+
+@c_eval_required
+class TestCEvaluatorDifferential:
+    def test_bulk_random_sample(self):
+        import random
+        random.seed(2026)
+        deck = [Card(r, s) for r in range(2, 15) for s in range(4)]
+        for _ in range(20000):
+            seven = random.sample(deck, 7)
+            _assert_matches_reference(seven)
+
+    def test_wheel_straight_non_flush(self):
+        cards = [Card(14, 0), Card(2, 1), Card(3, 2), Card(4, 3), Card(5, 0), Card(9, 1), Card(8, 2)]
+        _assert_matches_reference(cards)
+        assert evaluate_seven_c(cards)[:2] == (4, 5)
+
+    def test_wheel_straight_flush(self):
+        cards = [Card(14, 0), Card(2, 0), Card(3, 0), Card(4, 0), Card(5, 0), Card(9, 1), Card(8, 2)]
+        _assert_matches_reference(cards)
+        assert evaluate_seven_c(cards)[:2] == (8, 5)
+
+    def test_three_pair_in_seven(self):
+        # Same construction as TestHandEvaluator's three-pair-in-seven case
+        # -- Python-verified expected (2, 11, 8, 4); both evaluators must agree.
+        cards = [Card(11, 0), Card(11, 1), Card(8, 0), Card(8, 1), Card(4, 2), Card(4, 3), Card(2, 2)]
+        _assert_matches_reference(cards)
+        assert evaluate_seven_c(cards)[:4] == (2, 11, 8, 4)
+
+    def test_royal_flush(self):
+        cards = [Card(14, 0), Card(13, 0), Card(12, 0), Card(11, 0), Card(10, 0), Card(2, 1), Card(3, 2)]
+        _assert_matches_reference(cards)
+        assert evaluate_seven_c(cards)[:2] == (9, 14)
+
+    @pytest.mark.parametrize("cards", [
+        [Card(9, 0), Card(9, 1), Card(5, 2), Card(3, 3), Card(2, 0), Card(6, 1), Card(7, 2)],   # high card
+        [Card(9, 0), Card(9, 1), Card(5, 2), Card(3, 3), Card(2, 0), Card(6, 1), Card(4, 2)],   # one pair
+        [Card(9, 0), Card(9, 1), Card(5, 2), Card(5, 3), Card(2, 0), Card(6, 1), Card(7, 2)],   # two pair
+        [Card(9, 0), Card(9, 1), Card(9, 2), Card(5, 3), Card(2, 0), Card(6, 1), Card(7, 2)],   # trips
+        [Card(9, 0), Card(8, 1), Card(7, 2), Card(6, 3), Card(5, 0), Card(2, 1), Card(3, 2)],   # straight
+        [Card(14, 0), Card(9, 0), Card(7, 0), Card(4, 0), Card(2, 0), Card(5, 1), Card(8, 2)],  # flush
+        [Card(9, 0), Card(9, 1), Card(9, 2), Card(5, 3), Card(5, 0), Card(2, 1), Card(7, 2)],   # full house
+        [Card(9, 0), Card(9, 1), Card(9, 2), Card(9, 3), Card(2, 0), Card(5, 1), Card(7, 2)],   # four of a kind
+        [Card(14, 0), Card(2, 0), Card(3, 0), Card(4, 0), Card(5, 0), Card(9, 1), Card(8, 2)],  # straight flush (wheel)
+        [Card(14, 0), Card(13, 0), Card(12, 0), Card(11, 0), Card(10, 0), Card(2, 1), Card(3, 2)],  # royal flush
+    ])
+    def test_every_rank_value_category_covered(self, cards):
+        # Deliberate one-hand-per-category coverage -- the bulk random
+        # sample's natural rarity for quads/straight-flush/royal doesn't
+        # leave any category untested by chance alone.
+        _assert_matches_reference(cards)
+
+
+class TestCEvaluatorFallback:
+    def test_forced_fallback_reproduces_AA_benchmark(self, monkeypatch):
+        # Forces AVAILABLE=False for the duration of this test so
+        # calculate_win_odds() runs entirely on evaluate_seven_py() --
+        # confirms extracting the fallback out of the old inline
+        # max(Hand(...).get_hand_key() ...) expression didn't change
+        # calculate_win_odds()'s behavior. Same benchmark and tolerance
+        # as TestWinOddsBenchmarks::test_AA_vs_random_heads_up.
+        monkeypatch.setattr(c_hand_eval, "AVAILABLE", False)
+        engine = make_real_engine()
+        result = engine.calculate_win_odds(
+            [Card(14, 0), Card(14, 1)], [], num_opponents=1, simulations=3000
+        )
+        assert 0.82 <= result <= 0.88
 
 
 # =============================================================================

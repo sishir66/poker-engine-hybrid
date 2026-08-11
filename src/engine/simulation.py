@@ -9,6 +9,7 @@ import seaborn as sns
 from src.utils.card import Card
 from src.utils.deck import Deck
 from src.engine.hand import Hand
+from src.engine.c_hand_eval import evaluate_seven
 from src.models.train_poker import PokerMLP
 from src.models.generate_dataset import convert_card_to_data
 from src.engine.risk import calculate_kelly_fraction
@@ -119,10 +120,7 @@ class PokerEngine:
             full_board = community_cards + board_drawn
 
             our_seven = hole_cards + full_board
-            our_key = max(
-                Hand(list(c)).get_hand_key()
-                for c in itertools.combinations(our_seven, 5)
-            )
+            our_key = evaluate_seven(our_seven)
 
             opp_offset = cards_needed_board
             opp_keys = []
@@ -133,10 +131,7 @@ class PokerEngine:
                     Card(int(drawn[i0 + 1, 0]), int(drawn[i0 + 1, 1])),
                 ]
                 opp_seven = opp_hole + full_board
-                opp_key = max(
-                    Hand(list(c)).get_hand_key()
-                    for c in itertools.combinations(opp_seven, 5)
-                )
+                opp_key = evaluate_seven(opp_seven)
                 opp_keys.append(opp_key)
 
             total_credit += _showdown_credit(our_key, opp_keys)
