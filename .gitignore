@@ -6,3 +6,6 @@ venv/
 data/poker_model.pth
 data/poker_scaler.pkl
 data/*.csv
+src/c_core/*.so
+src/c_core/*.o
+src/c_core/*.dylib
