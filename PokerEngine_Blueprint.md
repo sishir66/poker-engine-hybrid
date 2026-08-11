@@ -41,7 +41,7 @@ This engine bypasses those bottlenecks using a **Hybrid Tech Stack**:
 
 ```
 src/
-  c_core/            — empty, .gitkeep placeholder (Phase VI, not started)
+  c_core/            — hand_eval.c + Makefile (Phase I, narrow slice pulled forward for Phase IV, commit `3888071`); §8's Phase VI label here was a mislabel -- Phase I is "C Core", not VI
   engine/
     hand.py          — Hand class, get_rank_value(), get_hand_key()
     simulation.py    — PokerEngine orchestration, get_best_hand(), calculate_win_odds()
@@ -314,9 +314,9 @@ Distinct from Phase V (which is QuantGrid-only, cross-session, hand-type-keyed).
   * Standard Chen formula implemented and hand-verified (including correcting two wrong turns: a false reference value and an incorrectly-invented wheel exception).
   * Fish and Grinder fully implemented (`score_hand()` + `decide()`), verified.
 
-* **Phase I: C Core & Shared Library Compilation** (not started)
-  * Native bitmask hand evaluation algorithm in C99.
-  * `Makefile` targeting Apple Silicon, `.so` output.
+* **Phase I: C Core & Shared Library Compilation** (narrow slice done — see below; the rest not started)
+  * `evaluate_seven()` — 7-card hand evaluator, C99, `src/c_core/hand_eval.c` + `Makefile`, arm64. Pulled forward ahead of full Phase I for Phase IV's Monte Carlo runtime (see §8's Phase IV entry). Verified 2026-08-11, commit `3888071`: 20,000-hand random differential test against `get_hand_key()` (0 mismatches) + explicit wheel/three-pair/royal-flush/per-category edge cases. Measured (not projected) speedup: 12.6x per hand, ~2.62 hrs projected for 100k heads-up hands (within the original 1.3–2.8 hr estimate). Called only from `calculate_win_odds()`'s inner loop via `src/engine/c_hand_eval.py`'s ctypes binding, with a pure-Python fallback (`evaluate_seven_py`) when the `.so` isn't built (it's gitignored, platform-specific, not committed). `get_best_hand()` and everything else still uses `Hand`/`get_hand_key()` directly, unchanged.
+  * No other bitmask/vectorized hand-eval work started — this is one function, not a general C migration.
 
 * **Phase II: FFI Interface & Vectorized Memory Layouts** (not started)
   * `ctypes`/`cffi` bridging, zero-copy array mutation.
@@ -358,6 +358,7 @@ Distinct from Phase V (which is QuantGrid-only, cross-session, hand-type-keyed).
 | `PokerEngine.__init__` crashes on fresh clone if model files (`data/poker_model.pth`, `data/poker_scaler.pkl`) are absent — both are gitignored, so this fails immediately for anyone cloning the repo without first training a model | **Fixed** — verified 2026-08-09, commit `3ae4629`. Load wrapped in try/except (FileNotFoundError, OSError); `self.model`/`self.scaler` set to `None` on failure and unused elsewhere (confirmed via full-repo search — `get_best_hand()`/`calculate_win_odds()` don't depend on the MLP path). Fresh-clone crash simulated (real files temporarily hidden, restored immediately after) and win_odds benchmarks re-verified with no regression. | — |
 | `calculate_win_odds()`'s cache key omitted `num_opponents`/`simulations` — calling it again with a different opponent count or sim count on the same engine silently returned the stale cached value (`AA vs 1 opp` and `AA vs 5 opp` both returned an identical `0.8381`). Discovered during Phase IV scoping, before any loop existed to expose it at runtime. | **Fixed** — Phase IV Stage 0, verified 2026-08-10, commit `335db89`. Cache identity extended to include both parameters. Verified: `AA vs 1 opp` (0.8458) and `AA vs 5 opp` (0.4915) now differ on one engine with no manual reset. | — |
 | `calculate_win_odds()`'s tie handling was hardcoded heads-up (`(wins + ties/2)/simulations`) — a forced 3-way chop returned `0.5000` instead of the correct `0.3333`. | **Fixed** — Phase IV Stage 0, verified 2026-08-10, commit `335db89`. Extracted `_showdown_credit(our_key, opp_keys)`, crediting `1/k` where `k` is the number of players who actually share the winning key in that simulation — not `num_opponents+1`, which is only correct for a full chop and wrong for a partial tie (some but not all opponents sharing the best hand). Verified against a 7-case table including the partial-tie case a naive divisor breaks, plus a real 3-way forced-chop benchmark returning exact `0.3333`; existing heads-up forced-tie benchmark still returns exact `0.5` (regression-safe). | — |
+| `calculate_win_odds()` spent 96.3% of its per-call cost in Python hand evaluation (`Hand()` + `get_hand_key()`'s max-of-21-combos search, 42,000 calls per 1000-sim run) — projected ~31–34 hrs for 100k heads-up hands, too slow for BB/100 measurement (Phase IV needs ~100k+ hands to resolve a real edge; see §8's Phase IV entry). | **Fixed (narrow slice)** — Phase IV Stage 0.5, verified 2026-08-11, commit `3888071`. Added `evaluate_seven()`, a C99 7-card evaluator (`src/c_core/hand_eval.c`) called only from `calculate_win_odds()`'s inner loop, with a pure-Python fallback when the (gitignored, platform-specific) `.so` isn't built. Verified: 20,000-hand random differential test against `get_hand_key()` (0 mismatches) + explicit edge cases (wheel straight/straight-flush, three-pair-in-seven, royal flush, one hand per rank_value category). Measured (not projected, after excluding a one-time warmup call): 12.6x speedup per hand, ~2.62 hrs for 100k heads-up hands. New finding, not acted on in this stage: ctypes marshaling inside the binding is now the dominant remaining cost (~47% of total, mostly array construction rather than the C call itself) — a candidate for a future follow-up, not a blocker. | — |
 | Tilt aggression compounds permanently across repeated tilt episodes (no reset to base) | **Fixed** — `base_aggression` field added, verified 2026-08-08, commit `57087ce`. See §5.2. | — |
 | `generate_boats()` indentation bug (pre-existing, causes duplicate row corruption in dataset generation) | Open, not yet addressed this session | Low (dataset-gen only, not runtime-critical) |
 | `record_action()` / `plot_session_results()` called in old `__main__` block but never defined | Open, likely dead code post-restructure — confirm still referenced anywhere before fixing | Low |
@@ -365,4 +366,4 @@ Distinct from Phase V (which is QuantGrid-only, cross-session, hand-type-keyed).
 
 ---
 
-*Last updated: 2026-08-10 — Phase IV Stage 0 closed (commit `335db89`): `calculate_win_odds()` cache-key and tie-split fixes, `Card.__hash__`, `decide()` unified to 4-arg across all agents. Next: Phase IV Stage 0.5 (narrow C hand evaluator) per the Phase IV scoping doc.*
+*Last updated: 2026-08-11 — Phase IV Stage 0.5 closed (commit `3888071`): narrow C hand evaluator for `calculate_win_odds()`'s inner loop, measured 12.6x speedup, ~2.62 hrs projected for 100k heads-up hands. Next: Phase IV Stage 1 (dealer, pot manager, table/rotation, ledger, standalone `check_tilt()` unit test) per the Phase IV scoping doc.*
