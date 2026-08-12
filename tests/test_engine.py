@@ -5,13 +5,6 @@ Every assertion below traces to a specific prior commit/verification —
 see PokerEngine_Blueprint.md for full rationale on each group. Nothing
 here is a newly-invented "expected" value; each one was independently
 re-derived against current source before being written as a test.
-
-TODO: check_tilt()'s trigger logic (Blueprint §5.2) has no coverage.
-Design exists but was never exercised with confirmed printed output
-this session (unlike the to_dict/from_dict round-trip below, which
-was). Queued as a separate task alongside the tilt-compounding bug
-fix — do not add tests here without first generating real reference
-output to test against.
 """
 
 import sys
@@ -35,6 +28,9 @@ from src.engine.agent import Agent, Fish, Grinder, QuantGrid, Whale
 from src.engine.simulation import PokerEngine, _showdown_credit
 from src.engine import c_hand_eval
 from src.engine.c_hand_eval import evaluate_seven_c, evaluate_seven_py, AVAILABLE
+from src.engine.pot import PotManager
+from src.engine.table import Table
+from src.engine.ledger import Ledger
 from src.utils.card import Card
 
 
@@ -909,3 +905,236 @@ class TestAgentSerialization:
             action, size = restored.decide(200, 100, 10, 1000)
             assert action in ("fold", "call", "raise")
             assert size >= 0
+
+
+# =============================================================================
+# Group: PotManager (Stage 1, Phase IV primitives)
+# =============================================================================
+
+class TestPotManager:
+    def test_betting_sequence_tracks_pot_contribution_and_amount_to_call(self):
+        pot = PotManager()
+        # Blinds: SB=1 posts 1, BB=2 posts 2.
+        pot.set_contribution("sb", 1)
+        pot.set_contribution("bb", 2)
+        assert pot.total_pot() == 3
+        assert pot.contribution("sb") == 1
+        assert pot.amount_to_call("sb") == 1
+        assert pot.amount_to_call("bb") == 0
+
+        # SB calls up to 2.
+        pot.set_contribution("sb", 2)
+        assert pot.total_pot() == 4
+        assert pot.amount_to_call("sb") == 0
+        assert pot.amount_to_call("bb") == 0
+
+        # BB raises-TO 10.
+        pot.set_contribution("bb", 10)
+        assert pot.total_pot() == 12
+        assert pot.amount_to_call("sb") == 8
+        assert pot.amount_to_call("bb") == 0
+
+        # SB calls the raise (raise-TO 10).
+        pot.set_contribution("sb", 10)
+        assert pot.total_pot() == 20
+        assert pot.amount_to_call("sb") == 0
+        assert pot.highest_contribution() == 10
+
+    def test_set_contribution_rejects_a_decrease(self):
+        pot = PotManager()
+        pot.set_contribution("p1", 10)
+        with pytest.raises(ValueError):
+            pot.set_contribution("p1", 5)
+
+    def test_split_pot_even_two_way(self):
+        pot = PotManager()
+        pot.set_contribution("p1", 50)
+        pot.set_contribution("p2", 50)
+        shares = pot.split_pot(["p1", "p2"], button_seat="p1", seat_order=["p1", "p2"])
+        assert shares == {"p1": 50, "p2": 50}
+        assert sum(shares.values()) == pot.total_pot()
+
+    def test_split_pot_odd_three_way_remainder_to_first_clockwise_from_button(self):
+        pot = PotManager()
+        pot.set_contribution("p1", 34)
+        pot.set_contribution("p2", 33)
+        pot.set_contribution("p3", 33)
+        # pot = 100, 3-way split = 33 each + 1 remainder.
+        # button = p1 -> first clockwise is p2.
+        shares = pot.split_pot(["p1", "p2", "p3"], button_seat="p1",
+                                seat_order=["p1", "p2", "p3"])
+        assert shares["p2"] == 34
+        assert shares["p1"] == 33
+        assert shares["p3"] == 33
+        assert sum(shares.values()) == pot.total_pot() == 100
+
+    def test_split_pot_odd_remainder_skips_a_non_winning_seat(self):
+        pot = PotManager()
+        pot.set_contribution("p1", 34)
+        pot.set_contribution("p2", 33)
+        pot.set_contribution("p3", 33)
+        # button = p3, winners = p1 and p2 only (p3 lost). First clockwise
+        # from p3 is p1 -- p1 should get the remainder, not p3.
+        shares = pot.split_pot(["p1", "p2"], button_seat="p3",
+                                seat_order=["p1", "p2", "p3"])
+        assert shares["p1"] == 50
+        assert shares["p2"] == 50
+        assert sum(shares.values()) == pot.total_pot() == 100
+
+
+# =============================================================================
+# Group: Table / rotation (Stage 1, Phase IV primitives)
+# =============================================================================
+
+class TestTable:
+    def test_heads_up_blind_seats_button_is_small_blind(self):
+        table = Table(["p1", "p2"])
+        sb, bb = table.blind_seats()
+        assert sb == table.button_seat == "p1"
+        assert bb == "p2"
+
+    def test_four_seat_blind_seats_are_two_clockwise_from_button(self):
+        table = Table(["p1", "p2", "p3", "p4"])
+        sb, bb = table.blind_seats()
+        assert sb == "p2"
+        assert bb == "p3"
+
+    def test_six_seat_blind_seats_are_two_clockwise_from_button(self):
+        table = Table(["p1", "p2", "p3", "p4", "p5", "p6"])
+        sb, bb = table.blind_seats()
+        assert sb == "p2"
+        assert bb == "p3"
+
+    def test_seat_after_wraps_around(self):
+        table = Table(["p1", "p2", "p3"])
+        assert table.seat_after("p3") == "p1"
+        assert table.seat_after("p3", offset=2) == "p2"
+
+    def test_rotate_button_full_cycle_returns_to_start_two_seats(self):
+        table = Table(["p1", "p2"])
+        start = table.button_seat
+        table.rotate_button()
+        table.rotate_button()
+        assert table.button_seat == start
+
+    def test_rotate_button_full_cycle_returns_to_start_six_seats(self):
+        table = Table(["p1", "p2", "p3", "p4", "p5", "p6"])
+        start = table.button_seat
+        for _ in range(6):
+            table.rotate_button()
+        assert table.button_seat == start
+
+
+# =============================================================================
+# Group: Ledger (Stage 1, Phase IV primitives)
+# =============================================================================
+
+class TestLedger:
+    def test_all_zero_profit_gives_zero_mean_and_finite_ci(self):
+        ledger = Ledger()
+        for _ in range(10):
+            ledger.record_hand("p1", 0)
+        mean, ci = ledger.bb_per_100("p1")
+        assert mean == 0
+        assert ci >= 0
+        assert ci < float("inf")
+
+    def test_ci_narrows_as_hand_count_grows(self):
+        # Alternating 1.0/3.0 (not a constant) so variance is nonzero --
+        # a zero-variance sample gives ci == 0 at every n, which would
+        # pass this assertion vacuously rather than demonstrating narrowing.
+        ledger_small = Ledger()
+        ledger_large = Ledger()
+        for i in range(10):
+            ledger_small.record_hand("p1", 1.0 if i % 2 == 0 else 3.0)
+        for i in range(1000):
+            ledger_large.record_hand("p1", 1.0 if i % 2 == 0 else 3.0)
+        _, ci_small = ledger_small.bb_per_100("p1")
+        _, ci_large = ledger_large.bb_per_100("p1")
+        assert ci_large < ci_small
+
+    def test_bb_per_100_raises_below_two_hands(self):
+        ledger = Ledger()
+        with pytest.raises(ValueError):
+            ledger.bb_per_100("p1")
+        ledger.record_hand("p1", 5)
+        with pytest.raises(ValueError):
+            ledger.bb_per_100("p1")
+
+    def test_hands_played_tracks_count_per_agent(self):
+        ledger = Ledger()
+        ledger.record_hand("p1", 1)
+        ledger.record_hand("p1", -1)
+        ledger.record_hand("p2", 3)
+        assert ledger.hands_played("p1") == 2
+        assert ledger.hands_played("p2") == 1
+        assert ledger.hands_played("p3") == 0
+
+
+# =============================================================================
+# Group: check_tilt() standalone coverage (Stage 1, Phase IV primitives)
+# =============================================================================
+
+class TestCheckTilt:
+    def test_no_significant_loss_does_not_tilt(self):
+        agent = Agent(name="A", kelly_alpha=0.5)
+        agent.check_tilt(hand_profit=0, bankroll=100)
+        assert agent.is_tilted is False
+        assert agent._tilt_hands_remaining == 0
+        assert agent.aggression == agent.base_aggression
+
+    def test_exactly_at_boundary_does_not_tilt(self):
+        # ratio == 0.5 exactly -- boundary is exclusive (> 0.5, not >=).
+        agent = Agent(name="A", kelly_alpha=0.5)
+        agent.check_tilt(hand_profit=-50, bankroll=100)
+        assert agent.is_tilted is False
+        assert agent._tilt_hands_remaining == 0
+
+    def test_just_over_boundary_triggers_tilt(self):
+        agent = Agent(name="A", kelly_alpha=0.5)
+        agent.check_tilt(hand_profit=-51, bankroll=100)
+        assert agent.is_tilted is True
+        assert agent._tilt_hands_remaining == 10
+        assert agent.aggression == agent.base_aggression * 1.5
+
+    def test_cooldown_counts_down_on_neutral_hands(self):
+        agent = Agent(name="A", kelly_alpha=0.5)
+        agent.check_tilt(hand_profit=-51, bankroll=100)
+        for _ in range(9):
+            agent.check_tilt(hand_profit=0, bankroll=100)
+        assert agent._tilt_hands_remaining == 1
+        assert agent.is_tilted is True
+        assert agent.aggression == agent.base_aggression * 1.5
+
+    def test_cooldown_completes_and_resets_aggression(self):
+        agent = Agent(name="A", kelly_alpha=0.5)
+        agent.check_tilt(hand_profit=-51, bankroll=100)
+        for _ in range(10):
+            agent.check_tilt(hand_profit=0, bankroll=100)
+        assert agent._tilt_hands_remaining == 0
+        assert agent.is_tilted is False
+        assert agent.aggression == agent.base_aggression
+
+    def test_retilt_mid_cooldown_resets_cooldown_without_compounding_aggression(self):
+        agent = Agent(name="A", kelly_alpha=0.5)
+        agent.check_tilt(hand_profit=-51, bankroll=100)
+        for _ in range(5):
+            agent.check_tilt(hand_profit=0, bankroll=100)
+        assert agent._tilt_hands_remaining == 5
+        agent.check_tilt(hand_profit=-51, bankroll=100)
+        assert agent._tilt_hands_remaining == 10
+        assert agent.aggression == agent.base_aggression * 1.5  # not *1.5*1.5
+
+    def test_bankroll_zero_skips_trigger_branch(self):
+        agent = Agent(name="A", kelly_alpha=0.5)
+        agent.check_tilt(hand_profit=-1000, bankroll=0)
+        assert agent.is_tilted is False
+        assert agent._tilt_hands_remaining == 0
+
+    def test_winning_hand_while_tilted_does_not_retrigger_and_cooldown_still_decrements(self):
+        agent = Agent(name="A", kelly_alpha=0.5)
+        agent.check_tilt(hand_profit=-51, bankroll=100)
+        agent.check_tilt(hand_profit=200, bankroll=100)  # win, still in cooldown
+        assert agent._tilt_hands_remaining == 9
+        assert agent.is_tilted is True
+        assert agent.aggression == agent.base_aggression * 1.5
