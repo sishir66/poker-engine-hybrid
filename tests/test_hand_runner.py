@@ -328,3 +328,31 @@ class TestClosurePredicate:
         # -> both land at 52
         assert pot.contribution("p1") == 52
         assert pot.contribution("p2") == 52
+
+    def test_zero_size_raise_floors_to_one_chip_and_still_converges(self):
+        """
+        A ("raise", 0) return while not all-in would otherwise be a
+        complete no-op -- contribution unchanged, amount_to_call
+        unchanged -- which could repeat forever with zero progress and
+        hang the while loop. _act()'s max(1, min(size, stack_left)) floor
+        guarantees at least 1 chip of progress per raise action, so the
+        seat still gets re-polled with a smaller cost_to_call and the
+        round still converges in a bounded number of laps, same shape as
+        the size>0 undershoot case above.
+        """
+        table = Table(["p1", "p2"], small_blind=1, big_blind=2)
+        pot = PotManager()
+        pot.set_contribution("p1", 2)
+        pot.set_contribution("p2", 2)
+        live = {"p1", "p2"}
+        hole = {"p1": [], "p2": []}
+        agents = {
+            "p1": ScriptedAgent([("check", 0), ("raise", 0), ("call", 0)]),
+            "p2": ScriptedAgent([("raise", 50), ("check", 0)]),
+        }
+        run_betting_round(agents, hole, pot, table, live, "p1", [], 100_000, 2)
+        # p1: check(2) -> p2: raise to 52 -> p1: raise(0) floors to 1,
+        # contribution 2+1=3, still owes 49 -> p2: check (no-op) ->
+        # p1: call 49 -> both land at 52
+        assert pot.contribution("p1") == 52
+        assert pot.contribution("p2") == 52
