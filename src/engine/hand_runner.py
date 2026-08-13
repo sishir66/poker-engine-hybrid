@@ -66,7 +66,15 @@ def _act(seat, agent, hole, pot, community, starting_stack, min_raise, live, act
         # plan) -- converted to a raise-TO total before it reaches the pot
         # manager. min(size, stack_left) means an all-in can never exceed
         # the stack or trip PotManager's monotonic-decrease guard.
-        new_total = pot.contribution(seat) + min(size, stack_left)
+        # max(1, ...) floors it at 1 chip: stack_left is always >= 1 for an
+        # actionable seat, so this never conflicts with that upper bound.
+        # A size==0 raise would be a complete no-op (contribution unchanged,
+        # amount_to_call unchanged) and could repeat forever with no
+        # progress -- this floor guarantees a raise action always commits
+        # at least 1 chip. Narrower than full min-raise escalation
+        # (deferred, Stage 3) -- this only rules out a zero-progress raise.
+        size = max(1, min(size, stack_left))
+        new_total = pot.contribution(seat) + size
         pot.set_contribution(seat, new_total)
         if new_total > highest_before:
             acted.clear()  # real aggression reopens the round for everyone else
