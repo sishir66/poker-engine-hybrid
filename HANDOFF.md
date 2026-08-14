@@ -86,7 +86,7 @@ Everything from commit `335db89` onward is **Phase IV** (environment execution /
 | Item | Why not started |
 |---|---|
 | Position-aware `decide()` for all agents | Noted in `Agent` base class docstring. Not designed yet. |
-| Phase IV Stage 3 — multi-hand session loop | Button rotation between hands (`play_hand()` deliberately does not rotate the button itself — that's the caller's job across a session), proper no-limit `min_raise` escalation (Stage 2 uses a flat `table.big_blind` floor as a documented simplification, not an oversight), N>2 seats (needs side-pot logic — structurally unreachable at N=2 under reset-stacks, mandatory at N≥3 with unequal stacks), explicit RNG seeding for reproducible full runs. Not started. |
+| Proper no-limit `min_raise` escalation, N>2 seats, side-pot logic | Explicitly de-scoped from Stage 3 (`HANDOFF-3.md` §4) — not this or any numbered stage. N>2 needs side-pot logic, structurally unreachable at N=2 under reset-stacks, mandatory at N≥3 with unequal stacks. |
 
 ---
 

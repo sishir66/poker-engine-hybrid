@@ -64,7 +64,7 @@ Framed as standalone, quantified bullets — pick and adapt per role/target.
   underlying computation cost.
 
 **Testing, verification, and quality rigor**
-- Grew a test suite from a single placeholder file to 180 passing tests,
+- Grew a test suite from a single placeholder file to 187 passing tests,
   each assertion independently re-derived from first principles rather
   than trusted from a supplied "expected" value — this practice caught
   multiple incorrect reference values before they became silent bugs.
@@ -74,7 +74,17 @@ Framed as standalone, quantified bullets — pick and adapt per role/target.
   implementation cleared a statistically significant edge while the
   broken one collapsed to a large negative result under the identical
   seed and hand count — rather than shipping a test that would pass
-  against either version.
+  against either version. The test is committed and runs on every suite
+  invocation (`test_grinder_beats_fish_over_20000_hands`), not as a
+  one-time check.
+- Produced the project's first statistically validated head-to-head
+  performance result from the simulation engine: a tight-aggressive
+  agent strategy outperformed a loose-passive one by an average of 23.7
+  BB/100 across 10 independently seeded 20,000-hand simulations
+  (per-seed means ranged 12.0–37.7; every seed's own 95% CI excluded
+  zero, though the weakest seed's lower bound cleared it by only 0.3
+  BB/100) — isolated to decision policy alone, since both agents played
+  through the identical rules engine.
 - Found and fixed a silent infinite-loop risk in a betting-round state
   machine *before* it could affect an unattended, multi-thousand-hand
   automated simulation run — the class of bug that is cheap to fix in
@@ -82,8 +92,10 @@ Framed as standalone, quantified bullets — pick and adapt per role/target.
 - Diagnosed a subtle randomness-reproducibility bug in a simulation
   harness (state leaking from an unseeded global RNG, distinct from a
   correctly-seeded local one) through direct empirical demonstration,
-  then fixed and re-verified full reproducibility across every
-  randomness source in the pipeline.
+  then fixed it across every randomness source in the pipeline and
+  locked the fix behind a committed regression test that fails if
+  reproducibility ever breaks
+  (`test_same_seed_reproduces_cards_and_outcomes`).
 
 **Debugging & root-cause analysis**
 - Traced a multi-step state-machine edge case (an intentionally
