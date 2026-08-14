@@ -390,4 +390,4 @@ Distinct from Phase V (which is QuantGrid-only, cross-session, hand-type-keyed).
 
 ---
 
-*Last updated: 2026-08-12 — Phase IV Stage 2 closed (commit `8faa683`): betting loop, hand state machine, and Showdown. First integration stage — `check_tilt()` finally has a real call site, chip conservation is asserted on every hand, the cache_sig/no-side-pot invariants are verified rather than assumed. Next: Phase IV Stage 3 (multi-hand session loop with button rotation, proper min_raise escalation, N>2 seats).*
+*Last updated: 2026-08-14 — Phase IV Stage 3 closed (commit `e73d246`): multi-hand session loop, global RNG seeding fix, Grinder-vs-Fish directional-edge behavioral test (n=20000, re-derived from an originally-scoped 5000 that didn't replicate), equity-cache decision closed by measurement (no cache needed). See `HANDOFF-4.md`. Nothing is currently scoped past Stage 3 — full min-raise escalation, N>2 seats, and side-pot logic remain explicitly deferred, no stage number attached.*
