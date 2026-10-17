@@ -9,3 +9,12 @@ data/*.csv
 src/c_core/*.so
 src/c_core/*.o
 src/c_core/*.dylib
+# Python
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.coverage
+htmlcov/
+.ipynb_checkpoints/
