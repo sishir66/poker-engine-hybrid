@@ -12,6 +12,10 @@ class Ledger:
     def record_hand(self, agent_id, profit_bb):
         self._profits_bb.setdefault(agent_id, []).append(profit_bb)
 
+    def profits_bb(self, agent_id):
+        """Read-only copy of the per-hand profits (in big blinds) recorded for agent_id."""
+        return tuple(self._profits_bb.get(agent_id, ()))
+
     def hands_played(self, agent_id):
         return len(self._profits_bb.get(agent_id, []))
 
